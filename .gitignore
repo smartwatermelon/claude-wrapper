@@ -1,0 +1,23 @@
+# Local secrets override (never commit)
+.claude/secrets.local.op
+
+# Test artifacts
+tests/tmp/
+tests/*.log
+tests/*.tmp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Temporary files
+*.bak
+*.tmp
