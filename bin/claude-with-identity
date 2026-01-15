@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Debug mode (set CLAUDE_DEBUG=true for verbose output)
+DEBUG="${CLAUDE_DEBUG:-false}"
+
+# Logging functions
+debug_log() {
+  if [[ "${DEBUG}" == "true" ]]; then
+    echo "DEBUG: $*" >&2
+  fi
+}
+
+log_error() {
+  echo "ERROR: $*" >&2
+}
+
+log_warn() {
+  echo "WARNING: $*" >&2
+}
+
+# Git identity for Claude Code operations
+readonly CLAUDE_GIT_NAME="Claude Code Bot"
+readonly CLAUDE_GIT_EMAIL="claude-code@smartwatermelon.github"
+readonly CLAUDE_SSH_KEY="${HOME}/.ssh/id_ed25519_claude_code"
+readonly CLAUDE_GH_TOKEN_FILE="${HOME}/.config/claude-code/gh-token"
+
+# 1Password secrets configuration
+readonly CLAUDE_OP_GLOBAL_SECRETS="${HOME}/.config/claude-code/secrets.op"
+
+# Project secrets must be canonicalized to prevent path traversal
+# Only load if inside a git repository
+readonly CLAUDE_OP_PROJECT_SECRETS=".claude/secrets.op"
+readonly CLAUDE_OP_LOCAL_SECRETS=".claude/secrets.local.op"
+
+# Set Git author/committer identity
+export GIT_AUTHOR_NAME="${CLAUDE_GIT_NAME}"
+export GIT_AUTHOR_EMAIL="${CLAUDE_GIT_EMAIL}"
+export GIT_COMMITTER_NAME="${CLAUDE_GIT_NAME}"
+export GIT_COMMITTER_EMAIL="${CLAUDE_GIT_EMAIL}"
+
+debug_log "Git identity: ${CLAUDE_GIT_NAME} <${CLAUDE_GIT_EMAIL}>"
+
+# Use dedicated SSH key with proper quoting
+if [[ -f "${CLAUDE_SSH_KEY}" ]]; then
+  printf -v GIT_SSH_COMMAND 'ssh -i %q -o IdentitiesOnly=yes' "${CLAUDE_SSH_KEY}"
+  export GIT_SSH_COMMAND
+  debug_log "Using SSH key: ${CLAUDE_SSH_KEY}"
+else
+  debug_log "SSH key not found: ${CLAUDE_SSH_KEY}"
+fi
+
+# Validate file permissions - BLOCKING (returns 1 if insecure)
+check_file_permissions() {
+  local file="$1"
+  local perms
+
+  # Get permissions (Darwin vs Linux stat syntax)
+  perms="$(stat -f '%A' "${file}" 2>/dev/null || stat -c '%a' "${file}" 2>/dev/null || echo "unknown")"
+
+  if [[ "${perms}" == "unknown" ]]; then
+    log_error "Could not check permissions for ${file}"
+    return 1
+  fi
+
+  # Check if group has ANY permissions (middle digit must be 0)
+  if [[ "${perms:1:1}" != "0" ]]; then
+    log_error "${file} has group permissions (${perms}), refusing to load"
+    return 1
+  fi
+
+  # Check if world has ANY permissions (last digit must be 0)
+  if [[ "${perms: -1}" != "0" ]]; then
+    log_error "${file} has world permissions (${perms}), refusing to load"
+    return 1
+  fi
+
+  # Verify file is owned by current user
+  local file_owner
+  local current_uid
+  file_owner="$(stat -f '%u' "${file}" 2>/dev/null || stat -c '%u' "${file}" 2>/dev/null || echo "unknown")"
+  current_uid="$(id -u)" || current_uid="unknown"
+  if [[ "${file_owner}" != "${current_uid}" ]]; then
+    log_error "${file} is not owned by current user (owner: ${file_owner}, current: ${current_uid})"
+    return 1
+  fi
+
+  debug_log "File permissions OK for ${file}: ${perms}"
+  return 0
+}
+
+# Canonicalize and validate path - prevents traversal attacks
+canonicalize_path() {
+  local path="$1"
+  local canonical
+
+  # Check if file exists before canonicalizing
+  if [[ ! -e "${path}" ]]; then
+    return 1
+  fi
+
+  # Get canonical path (resolves symlinks, removes .., etc)
+  canonical="$(realpath "${path}" 2>/dev/null || readlink -f "${path}" 2>/dev/null || echo "")"
+
+  if [[ -z "${canonical}" ]]; then
+    log_error "Could not canonicalize path: ${path}"
+    return 1
+  fi
+
+  # Verify no symlinks in the final path component
+  if [[ -L "${path}" ]]; then
+    log_error "Refusing to load from symlink: ${path}"
+    return 1
+  fi
+
+  echo "${canonical}"
+  return 0
+}
+
+# Check if path is contained within parent directory
+path_is_under() {
+  local child="$1"
+  local parent="$2"
+
+  # Must be equal or have parent as prefix with trailing slash
+  [[ "${child}" == "${parent}" ]] || [[ "${child}" == "${parent}/"* ]]
+}
+
+# Load GitHub CLI token with security checks
+if [[ -f "${CLAUDE_GH_TOKEN_FILE}" ]]; then
+  if check_file_permissions "${CLAUDE_GH_TOKEN_FILE}"; then
+    # Use Bash built-in read instead of cat
+    GH_TOKEN="$(<"${CLAUDE_GH_TOKEN_FILE}")"
+    export GH_TOKEN
+    debug_log "GitHub token loaded successfully"
+  else
+    log_error "GitHub token file has insecure permissions, refusing to load"
+    exit 1
+  fi
+else
+  debug_log "GitHub token file not found: ${CLAUDE_GH_TOKEN_FILE}"
+fi
+
+# Validate secrets file with path canonicalization
+validate_secrets_file() {
+  local file="$1"
+  local canonical
+
+  if [[ ! -f "${file}" ]]; then
+    return 1
+  fi
+
+  # Canonicalize path to prevent traversal
+  if ! canonical="$(canonicalize_path "${file}")"; then
+    return 1
+  fi
+  if [[ -z "${canonical}" ]]; then
+    return 1
+  fi
+
+  if [[ ! -r "${canonical}" ]]; then
+    log_error "Cannot read ${canonical}"
+    return 1
+  fi
+
+  # BLOCKING permission check
+  if ! check_file_permissions "${canonical}"; then
+    log_error "Refusing to load secrets from ${canonical} due to insecure permissions"
+    return 1
+  fi
+
+  # Return canonical path via stdout for caller to use
+  echo "${canonical}"
+  return 0
+}
+
+# 1Password session and secrets handling
+OP_ENABLED=false
+OP_ENV_ARGS=()
+
+if command -v op &>/dev/null; then
+  OP_VERSION="$(op --version 2>/dev/null)" || OP_VERSION="unknown"
+  debug_log "1Password CLI detected (version: ${OP_VERSION})"
+
+  # Check for active session
+  if ! op account get &>/dev/null; then
+    debug_log "No active 1Password session, attempting signin..."
+    echo "Authenticating with 1Password (once per session)..." >&2
+
+    # Modern 1Password CLI v2 signin (no eval needed)
+    if op signin 2>/dev/null; then
+      debug_log "1Password authentication successful"
+    else
+      # Double-check session status after signin attempt
+      if ! op account get &>/dev/null; then
+        log_warn "1Password authentication failed"
+        echo "Continuing without 1Password secrets" >&2
+        debug_log "1Password signin failed, proceeding without secrets"
+      else
+        debug_log "1Password authentication successful (session active)"
+      fi
+    fi
+  else
+    debug_log "Active 1Password session detected"
+  fi
+
+  # If we have a valid session, build env-file arguments
+  if op account get &>/dev/null; then
+    # Check for secrets files in priority order
+    # Later files override earlier ones (1Password behavior)
+
+    # Global secrets (always absolute path, safe)
+    if validated_path="$(validate_secrets_file "${CLAUDE_OP_GLOBAL_SECRETS}")"; then
+      OP_ENV_ARGS+=(--env-file="${validated_path}")
+      debug_log "Added global secrets (validated)"
+    fi
+
+    # Project secrets - only load if we're in a git repository
+    # This prevents loading arbitrary secrets from untrusted directories
+    if git rev-parse --git-dir &>/dev/null; then
+      # Get git repo root and canonicalize it
+      GIT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
+      if [[ -n "${GIT_ROOT_RAW}" ]]; then
+        # Canonicalize git root to handle symlinks
+        GIT_ROOT="$(realpath "${GIT_ROOT_RAW}" 2>/dev/null || echo "${GIT_ROOT_RAW}")"
+
+        PROJECT_SECRETS="${GIT_ROOT}/${CLAUDE_OP_PROJECT_SECRETS}"
+        if validated_path="$(validate_secrets_file "${PROJECT_SECRETS}")"; then
+          # Ensure canonical path is contained within git repo (proper boundary check)
+          if path_is_under "${validated_path}" "${GIT_ROOT}"; then
+            OP_ENV_ARGS+=(--env-file="${validated_path}")
+            debug_log "Added project secrets (validated)"
+          else
+            log_error "Project secrets path escapes git repository, refusing to load"
+          fi
+        fi
+
+        LOCAL_SECRETS="${GIT_ROOT}/${CLAUDE_OP_LOCAL_SECRETS}"
+        if validated_path="$(validate_secrets_file "${LOCAL_SECRETS}")"; then
+          # Ensure canonical path is contained within git repo (proper boundary check)
+          if path_is_under "${validated_path}" "${GIT_ROOT}"; then
+            OP_ENV_ARGS+=(--env-file="${validated_path}")
+            debug_log "Added local secrets (validated)"
+          else
+            log_error "Local secrets path escapes git repository, refusing to load"
+          fi
+        fi
+      fi
+    else
+      debug_log "Not in a git repository, skipping project/local secrets"
+    fi
+
+    # Enable 1Password if we have at least one secrets file
+    if [[ ${#OP_ENV_ARGS[@]} -gt 0 ]]; then
+      OP_ENABLED=true
+      debug_log "1Password enabled with ${#OP_ENV_ARGS[@]} secrets file(s)"
+    else
+      debug_log "No secrets files found, 1Password disabled"
+    fi
+  fi
+else
+  debug_log "1Password CLI not found in PATH"
+fi
+
+# Find and validate real claude binary
+WRAPPER_PATH="$(realpath "${BASH_SOURCE[0]}")"
+CLAUDE_BIN=""
+
+debug_log "Searching for claude binary (excluding ${WRAPPER_PATH})"
+
+# Search PATH first
+while IFS= read -r candidate; do
+  candidate_real="$(realpath "${candidate}" 2>/dev/null || echo "${candidate}")"
+  if [[ "${candidate_real}" != "${WRAPPER_PATH}" ]] && [[ -x "${candidate}" ]]; then
+    CLAUDE_BIN="${candidate}"
+    debug_log "Found claude binary via PATH: ${CLAUDE_BIN}"
+    break
+  fi
+done < <(type -ap claude 2>/dev/null || true)
+
+# Fallback to known locations
+if [[ -z "${CLAUDE_BIN}" ]]; then
+  for candidate in "${HOME}/.local/bin/claude" "${HOME}/.claude/local/claude" "${HOME}/.npm-global/bin/claude" "/opt/homebrew/bin/claude" "/usr/local/bin/claude"; do
+    if [[ -x "${candidate}" ]]; then
+      candidate_real="$(realpath "${candidate}" 2>/dev/null || echo "${candidate}")"
+      if [[ "${candidate_real}" != "${WRAPPER_PATH}" ]]; then
+        CLAUDE_BIN="${candidate}"
+        debug_log "Found claude binary at fallback location: ${CLAUDE_BIN}"
+        break
+      fi
+    fi
+  done
+fi
+
+if [[ -z "${CLAUDE_BIN}" ]]; then
+  log_error "Could not find claude binary"
+  debug_log "Search paths exhausted, no claude binary found"
+  exit 1
+fi
+
+# Validate claude binary before executing
+validate_claude_binary() {
+  local binary="$1"
+  local binary_owner
+  local binary_perms
+
+  # Get canonical path
+  binary="$(realpath "${binary}" 2>/dev/null || echo "${binary}")"
+
+  # Must be executable
+  if [[ ! -x "${binary}" ]]; then
+    log_error "Claude binary is not executable: ${binary}"
+    return 1
+  fi
+
+  # Check owner (should be current user or root)
+  local current_uid
+  binary_owner="$(stat -f '%u' "${binary}" 2>/dev/null || stat -c '%u' "${binary}" 2>/dev/null || echo "unknown")"
+  current_uid="$(id -u)" || current_uid="unknown"
+  if [[ "${binary_owner}" != "${current_uid}" ]] && [[ "${binary_owner}" != "0" ]]; then
+    log_error "Claude binary has unexpected owner (${binary_owner}): ${binary}"
+    return 1
+  fi
+
+  # Check permissions (should not be world-writable)
+  binary_perms="$(stat -f '%A' "${binary}" 2>/dev/null || stat -c '%a' "${binary}" 2>/dev/null || echo "unknown")"
+  if [[ "${binary_perms: -1}" =~ [2367] ]]; then
+    log_error "Claude binary is world-writable (${binary_perms}): ${binary}"
+    return 1
+  fi
+
+  debug_log "Claude binary validated: ${binary} (owner: ${binary_owner}, perms: ${binary_perms})"
+  return 0
+}
+
+# Validate before exec
+if ! validate_claude_binary "${CLAUDE_BIN}"; then
+  log_error "Claude binary failed security validation, refusing to execute"
+  exit 1
+fi
+
+# Launch claude with or without 1Password secrets injection
+if [[ "${OP_ENABLED}" == "true" ]]; then
+  debug_log "Executing: op run [${#OP_ENV_ARGS[@]} env-files] -- ${CLAUDE_BIN} [${#} args]"
+  exec op run "${OP_ENV_ARGS[@]}" -- "${CLAUDE_BIN}" "$@"
+else
+  debug_log "Executing: ${CLAUDE_BIN} [${#} args]"
+  exec "${CLAUDE_BIN}" "$@"
+fi
