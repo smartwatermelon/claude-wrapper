@@ -182,9 +182,10 @@ if command -v op &>/dev/null; then
   OP_VERSION="$(op --version 2>/dev/null)" || OP_VERSION="unknown"
   debug_log "1Password CLI detected (version: ${OP_VERSION})"
 
+  echo "[Claude wrapper] Checking 1Password authentication..." >&2
+
   # Check for active session and attempt signin if needed
   if ! op account get &>/dev/null; then
-    echo "[Claude wrapper] Authenticating with 1Password..." >&2
     debug_log "No active 1Password session, attempting signin..."
 
     # Attempt signin (may succeed silently via app integration)
