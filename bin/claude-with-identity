@@ -390,14 +390,18 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
       exit 1
     fi
 
+    # Strip comments before passing to op inject
+    # This prevents op inject from trying to resolve op:// patterns in comments
+    # grep -v returns exit 1 when no matches (no comments), which is fine
+    stripped_file="${temp_dir}/stripped-$(basename "${secrets_file}")"
+    grep -v '^[[:space:]]*#' "${secrets_file}" >"${stripped_file}" || true
+
     # Create temp file for resolved secrets
-    resolved_file="${temp_dir}/resolved-$(basename "${secrets_file}")" || {
-      log_error "Failed to create temp file for secret resolution"
-      exit 1
-    }
+    resolved_file="${temp_dir}/resolved-$(basename "${secrets_file}")"
 
     # Inject 1Password references - fails if any reference cannot be resolved
-    if ! op inject --in-file="${secrets_file}" --out-file="${resolved_file}" 2>&1; then
+    # Use stripped file to avoid resolving op:// patterns in comments
+    if ! op inject --in-file="${stripped_file}" --out-file="${resolved_file}" 2>&1; then
       log_error "Failed to inject secrets from ${secrets_file}"
       exit 1
     fi
