@@ -175,7 +175,7 @@ validate_secrets_file() {
 }
 
 # Detect non-interactive/automated contexts where 1Password should be skipped
-# This prevents hangs when wrapper is called from git hooks, CI, or nested Claude invocations
+# Use canonical stdin TTY check instead of fragile parent process inspection
 SKIP_OP_AUTH=false
 
 # Check for explicit skip flag
@@ -184,25 +184,10 @@ if [[ "${CLAUDE_SKIP_OP_AUTH:-false}" == "true" ]]; then
   debug_log "1Password auth skipped: CLAUDE_SKIP_OP_AUTH=true"
 fi
 
-# Check if running in git hook context
-if [[ -n "${GIT_HOOK:-}" ]]; then
+# Check if stdin is NOT a TTY (non-interactive context)
+if [[ ! -t 0 ]]; then
   SKIP_OP_AUTH=true
-  debug_log "1Password auth skipped: running in git hook (${GIT_HOOK})"
-fi
-
-# Check if running in CI environment
-if [[ "${CI:-false}" == "true" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]]; then
-  SKIP_OP_AUTH=true
-  debug_log "1Password auth skipped: running in CI environment"
-fi
-
-# Check if parent process is claude (indicates nested invocation from hook/analysis)
-if [[ -n "${PPID:-}" ]]; then
-  parent_cmd="$(ps -p "${PPID}" -o comm= 2>/dev/null || echo "")"
-  if [[ "${parent_cmd}" == *"claude"* ]] || [[ "${parent_cmd}" == *"node"* ]]; then
-    SKIP_OP_AUTH=true
-    debug_log "1Password auth skipped: parent process is ${parent_cmd} (likely nested invocation)"
-  fi
+  debug_log "1Password auth skipped: stdin is not a TTY (non-interactive context)"
 fi
 
 # 1Password session and secrets handling
@@ -379,8 +364,9 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
     secret_files+=("${arg#--env-file=}")
   done
 
-  # Load and export secrets from each file using op inject
-  # This preserves stdin as a TTY, unlike op run
+  # Process each secrets file using op inject --in-file/--out-file
+  # This approach avoids manual parsing edge cases (CRLF, empty values, etc)
+  # and preserves stdin as a TTY unlike op run
   for secrets_file in "${secret_files[@]}"; do
     debug_log "Injecting secrets from: ${secrets_file}"
 
@@ -390,67 +376,35 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
       exit 1
     fi
 
-    # Read the file and inject 1Password references
-    # Read line-by-line without IFS modification
-    # Handle files without trailing newline by checking if line content exists
-    while read -r line || [[ -n "${line}" ]]; do
-      # Skip empty lines and comments (don't log raw content to avoid exposing references)
-      if [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]]; then
-        debug_log "Skipping empty or comment line"
-        continue
-      fi
+    # Create temp file for resolved secrets with proper cleanup
+    resolved_file="$(mktemp)" || {
+      log_error "Failed to create temp file for secret resolution"
+      exit 1
+    }
+    # shellcheck disable=SC2064
+    trap "rm -f '${resolved_file}'" EXIT
 
-      # Verify line contains = character before parsing
-      if [[ "${line}" != *"="* ]]; then
-        log_warn "Skipping malformed line (no '=' found): ${line}"
-        continue
-      fi
+    # Inject 1Password references - fails if any reference cannot be resolved
+    if ! op inject --in-file="${secrets_file}" --out-file="${resolved_file}" 2>&1; then
+      log_error "Failed to inject secrets from ${secrets_file}"
+      rm -f "${resolved_file}"
+      exit 1
+    fi
 
-      # Split on first = only using parameter expansion to preserve values with =
-      key="${line%%=*}"
-      value="${line#*=}"
+    # Source the resolved env file with proper variable export
+    # Use set -a to auto-export all variables defined in the file
+    set -a
+    # shellcheck disable=SC1090
+    source "${resolved_file}" || {
+      log_error "Failed to source resolved secrets from ${secrets_file}"
+      set +a
+      rm -f "${resolved_file}"
+      exit 1
+    }
+    set +a
 
-      # Validate key=value format
-      if [[ -z "${key}" ]]; then
-        debug_log "Skipping line with no key"
-        continue
-      fi
-      if [[ -z "${value}" ]]; then
-        debug_log "Skipping malformed line (no value after =)"
-        continue
-      fi
-
-      # Validate key is a valid shell variable name (uppercase letters, digits, underscore)
-      if [[ ! "${key}" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
-        log_warn "Invalid environment variable name, skipping: ${key}"
-        continue
-      fi
-
-      # Inject 1Password references in the value using printf to preserve exact content
-      # Capture stderr for debugging when in debug mode
-      if [[ "${DEBUG}" == "true" ]]; then
-        injected_value="$(printf '%s\n' "${value}" | op inject 2>&1)"
-      else
-        injected_value="$(printf '%s\n' "${value}" | op inject 2>/dev/null)"
-      fi
-      inject_status=$?
-
-      # Check injection status and fall back to literal value if needed
-      if [[ ${inject_status} -ne 0 ]]; then
-        log_warn "Failed to inject secret for ${key}, using literal value"
-        injected_value="${value}"
-      fi
-
-      # Skip exporting empty values to avoid overwriting existing env vars
-      if [[ -z "${injected_value}" ]]; then
-        log_warn "Skipping empty value for ${key}"
-        continue
-      fi
-
-      # Export the variable (key already validated as safe variable name)
-      export "${key}=${injected_value}"
-      debug_log "Exported: ${key}=[REDACTED]"
-    done <"${secrets_file}"
+    debug_log "Loaded secrets from ${secrets_file}"
+    rm -f "${resolved_file}"
   done
 
   debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
