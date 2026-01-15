@@ -336,8 +336,83 @@ fi
 
 # Launch claude with or without 1Password secrets injection
 if [[ "${OP_ENABLED}" == "true" ]]; then
-  debug_log "Executing: op run [${#OP_ENV_ARGS[@]} env-files] -- ${CLAUDE_BIN} [${#} args]"
-  exec op run "${OP_ENV_ARGS[@]}" -- "${CLAUDE_BIN}" "$@"
+  debug_log "Loading secrets from ${#OP_ENV_ARGS[@]} file(s) and executing ${CLAUDE_BIN}"
+
+  # Extract file paths from --env-file=path arguments
+  declare -a secret_files=()
+  for arg in "${OP_ENV_ARGS[@]}"; do
+    secret_files+=("${arg#--env-file=}")
+  done
+
+  # Load and export secrets from each file using op inject
+  # This preserves stdin as a TTY, unlike op run
+  for secrets_file in "${secret_files[@]}"; do
+    debug_log "Injecting secrets from: ${secrets_file}"
+
+    # Verify file is readable before processing
+    if [[ ! -r "${secrets_file}" ]]; then
+      log_error "Cannot read secrets file: ${secrets_file}"
+      exit 1
+    fi
+
+    # Read the file and inject 1Password references
+    # Read line-by-line without IFS modification
+    while read -r line; do
+      # Skip empty lines and comments (don't log raw content to avoid exposing references)
+      if [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]]; then
+        debug_log "Skipping empty or comment line"
+        continue
+      fi
+
+      # Split on first = only using parameter expansion to preserve values with =
+      key="${line%%=*}"
+      value="${line#*=}"
+
+      # Validate key=value format
+      if [[ -z "${key}" ]]; then
+        debug_log "Skipping line with no key"
+        continue
+      fi
+      if [[ -z "${value}" ]]; then
+        debug_log "Skipping malformed line (no value after =)"
+        continue
+      fi
+
+      # Validate key is a valid shell variable name (uppercase letters, digits, underscore)
+      if [[ ! "${key}" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+        log_warn "Invalid environment variable name, skipping: ${key}"
+        continue
+      fi
+
+      # Inject 1Password references in the value using printf to preserve exact content
+      # Capture stderr for debugging when in debug mode
+      if [[ "${DEBUG}" == "true" ]]; then
+        injected_value="$(printf '%s\n' "${value}" | op inject 2>&1)"
+      else
+        injected_value="$(printf '%s\n' "${value}" | op inject 2>/dev/null)"
+      fi
+      inject_status=$?
+
+      # Check injection status and fall back to literal value if needed
+      if [[ ${inject_status} -ne 0 ]]; then
+        log_warn "Failed to inject secret for ${key}, using literal value"
+        injected_value="${value}"
+      fi
+
+      # Skip exporting empty values to avoid overwriting existing env vars
+      if [[ -z "${injected_value}" ]]; then
+        log_warn "Skipping empty value for ${key}"
+        continue
+      fi
+
+      # Export the variable (key already validated as safe variable name)
+      export "${key}=${injected_value}"
+      debug_log "Exported: ${key}=[REDACTED]"
+    done <"${secrets_file}"
+  done
+
+  debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
+  exec "${CLAUDE_BIN}" "$@"
 else
   debug_log "Executing: ${CLAUDE_BIN} [${#} args]"
   exec "${CLAUDE_BIN}" "$@"
