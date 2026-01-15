@@ -174,11 +174,33 @@ validate_secrets_file() {
   return 0
 }
 
+# Detect non-interactive/automated contexts where 1Password should be skipped
+# Use canonical stdin TTY check as primary signal
+SKIP_OP_AUTH=false
+
+# Check for explicit skip flag
+if [[ "${CLAUDE_SKIP_OP_AUTH:-false}" == "true" ]]; then
+  SKIP_OP_AUTH=true
+  debug_log "1Password auth skipped: CLAUDE_SKIP_OP_AUTH=true"
+fi
+
+# Check if stdin is NOT a TTY (non-interactive context)
+if [[ ! -t 0 ]]; then
+  SKIP_OP_AUTH=true
+  debug_log "1Password auth skipped: stdin is not a TTY (non-interactive context)"
+fi
+
+# Additional checks for CI environments that may allocate PTYs
+if [[ "${CI:-false}" == "true" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]]; then
+  SKIP_OP_AUTH=true
+  debug_log "1Password auth skipped: running in CI environment"
+fi
+
 # 1Password session and secrets handling
 OP_ENABLED=false
 OP_ENV_ARGS=()
 
-if command -v op &>/dev/null; then
+if command -v op &>/dev/null && [[ "${SKIP_OP_AUTH}" == "false" ]]; then
   OP_VERSION="$(op --version 2>/dev/null)" || OP_VERSION="unknown"
   debug_log "1Password CLI detected (version: ${OP_VERSION})"
 
@@ -254,7 +276,11 @@ if command -v op &>/dev/null; then
     debug_log "No active 1Password session, proceeding without secrets"
   fi
 else
-  debug_log "1Password CLI not found in PATH"
+  if [[ "${SKIP_OP_AUTH}" == "true" ]]; then
+    debug_log "1Password authentication skipped (automated/non-interactive context)"
+  else
+    debug_log "1Password CLI not found in PATH"
+  fi
 fi
 
 # Find and validate real claude binary
@@ -336,8 +362,75 @@ fi
 
 # Launch claude with or without 1Password secrets injection
 if [[ "${OP_ENABLED}" == "true" ]]; then
-  debug_log "Executing: op run [${#OP_ENV_ARGS[@]} env-files] -- ${CLAUDE_BIN} [${#} args]"
-  exec op run "${OP_ENV_ARGS[@]}" -- "${CLAUDE_BIN}" "$@"
+  debug_log "Loading secrets from ${#OP_ENV_ARGS[@]} file(s) and executing ${CLAUDE_BIN}"
+
+  # Extract file paths from --env-file=path arguments
+  declare -a secret_files=()
+  for arg in "${OP_ENV_ARGS[@]}"; do
+    secret_files+=("${arg#--env-file=}")
+  done
+
+  # Create temp directory for all resolved secret files
+  # This ensures proper cleanup even if processing multiple files
+  temp_dir="$(mktemp -d)" || {
+    log_error "Failed to create temp directory for secret resolution"
+    exit 1
+  }
+  trap 'rm -rf "${temp_dir}"' EXIT
+
+  # Process each secrets file using op inject --in-file/--out-file
+  # This approach avoids manual parsing edge cases (CRLF, empty values, etc)
+  # and preserves stdin as a TTY unlike op run
+  for secrets_file in "${secret_files[@]}"; do
+    debug_log "Injecting secrets from: ${secrets_file}"
+
+    # Verify file is readable before processing
+    if [[ ! -r "${secrets_file}" ]]; then
+      log_error "Cannot read secrets file: ${secrets_file}"
+      exit 1
+    fi
+
+    # Create temp file for resolved secrets
+    resolved_file="${temp_dir}/resolved-$(basename "${secrets_file}")" || {
+      log_error "Failed to create temp file for secret resolution"
+      exit 1
+    }
+
+    # Inject 1Password references - fails if any reference cannot be resolved
+    if ! op inject --in-file="${secrets_file}" --out-file="${resolved_file}" 2>&1; then
+      log_error "Failed to inject secrets from ${secrets_file}"
+      exit 1
+    fi
+
+    # Validate resolved file contains only safe variable assignments
+    # Note: Empty files (from comment-only secrets files) are valid and handled by validation
+    # Allows quoted values but blocks command execution metacharacters
+    # Pattern matches: KEY=value, KEY="value", KEY='value', comments, blank lines
+    # Blocks: semicolons, backticks, $(), pipes, redirects outside quotes
+    safe_pattern="^([A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|[^;\\\`\$()&<>|[:space:]]+)|#.*|[[:space:]]*)$"
+    if grep -vE "${safe_pattern}" "${resolved_file}" >/dev/null 2>&1; then
+      log_error "Resolved secrets file contains unsafe content: ${secrets_file}"
+      debug_log "Unsafe lines found:"
+      grep -vE "${safe_pattern}" "${resolved_file}" >&2 || true
+      exit 1
+    fi
+
+    # Source the resolved env file with proper variable export
+    # Use set -a to auto-export all variables defined in the file
+    set -a
+    # shellcheck disable=SC1090
+    source "${resolved_file}" || {
+      log_error "Failed to source resolved secrets from ${secrets_file}"
+      set +a
+      exit 1
+    }
+    set +a
+
+    debug_log "Loaded secrets from ${secrets_file}"
+  done
+
+  debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
+  exec "${CLAUDE_BIN}" "$@"
 else
   debug_log "Executing: ${CLAUDE_BIN} [${#} args]"
   exec "${CLAUDE_BIN}" "$@"
