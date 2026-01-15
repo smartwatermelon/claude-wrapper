@@ -182,32 +182,20 @@ if command -v op &>/dev/null; then
   OP_VERSION="$(op --version 2>/dev/null)" || OP_VERSION="unknown"
   debug_log "1Password CLI detected (version: ${OP_VERSION})"
 
-  echo "[Claude wrapper] Checking 1Password authentication..." >&2
-
-  # Check for active session
+  # Check for active session and attempt signin if needed
   if ! op account get &>/dev/null; then
+    echo "[Claude wrapper] Authenticating with 1Password..." >&2
     debug_log "No active 1Password session, attempting signin..."
-    echo "Authenticating with 1Password (once per session)..." >&2
 
-    # Modern 1Password CLI v2 signin (no eval needed)
-    if op signin 2>/dev/null; then
-      debug_log "1Password authentication successful"
-    else
-      # Double-check session status after signin attempt
-      if ! op account get &>/dev/null; then
-        log_warn "1Password authentication failed"
-        echo "Continuing without 1Password secrets" >&2
-        debug_log "1Password signin failed, proceeding without secrets"
-      else
-        debug_log "1Password authentication successful (session active)"
-      fi
-    fi
-  else
-    debug_log "Active 1Password session detected"
+    # Attempt signin (may succeed silently via app integration)
+    # Use || true to ignore exit code - we'll check session status next
+    # stderr is NOT suppressed so user can see diagnostic errors
+    op signin || true
   fi
 
-  # If we have a valid session, build env-file arguments
+  # Now check if we have a valid session (single source of truth)
   if op account get &>/dev/null; then
+    debug_log "1Password session active"
     # Check for secrets files in priority order
     # Later files override earlier ones (1Password behavior)
 
@@ -259,6 +247,10 @@ if command -v op &>/dev/null; then
     else
       debug_log "No secrets files found, 1Password disabled"
     fi
+  else
+    # No valid session - authentication failed or was cancelled
+    log_warn "1Password authentication failed or cancelled - continuing without secrets"
+    debug_log "No active 1Password session, proceeding without secrets"
   fi
 else
   debug_log "1Password CLI not found in PATH"
