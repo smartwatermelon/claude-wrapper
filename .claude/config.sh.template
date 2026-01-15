@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# Project Configuration Template
+# Copy to .claude/config.sh and customize for your project
+#
+# This file is sourced by:
+# - Build scripts (when using build-commons.sh)
+# - Deploy scripts (when using deploy-commons.sh)
+# - Any other scripts that need project-specific configuration
+
+# ============================================
+# NODE.JS PROJECTS
+# ============================================
+
+# Required Node version (used by build-commons.sh)
+# Uncomment and set to your required major version
+# export REQUIRED_NODE_VERSION="20"
+
+# Additional required tools beyond standard development tools
+# build-commons.sh will verify these are installed
+export PROJECT_REQUIRED_TOOLS=(
+  # "eas"      # Expo Application Services (React Native)
+  # "maestro"  # Mobile E2E testing framework
+  # "jq"       # JSON parsing (for CI/CD scripts)
+  # "wrangler" # Cloudflare Workers CLI
+)
+
+# ============================================
+# DEPLOYMENT CONFIGURATION
+# ============================================
+
+# Required secrets for deployment (hard-blocks deployment if missing)
+# Example: Cloudflare Workers secrets
+export DEPLOYMENT_REQUIRED_SECRETS=(
+  # "API_KEY"
+  # "DATABASE_URL"
+  # "JWT_SECRET"
+)
+
+# Optional secrets (warns if missing, doesn't block)
+export DEPLOYMENT_OPTIONAL_SECRETS=(
+  # "SENTRY_DSN"
+  # "ANALYTICS_KEY"
+  # "FEATURE_FLAG_KEY"
+)
+
+# Deployment smoke test endpoints (relative to base URL)
+# Used by deploy-commons.sh run_endpoint_smoke_tests()
+export DEPLOYMENT_SMOKE_TEST_ENDPOINTS=(
+  # "/health"
+  # "/api/v1/status"
+  # "/.well-known/health"
+)
+
+# ============================================
+# BUILD CONFIGURATION
+# ============================================
+
+# Skip certain checks if needed (use sparingly)
+# export SKIP_NODE_VERSION_CHECK=1
+# export SKIP_DEPENDENCY_CHECK=1
+
+# Custom npm/yarn/pnpm commands
+# export NPM_CLIENT="pnpm"  # Default: npm
+# export TEST_COMMAND="npm test"
+# export BUILD_COMMAND="npm run build"
+
+# ============================================
+# CUSTOM HOOKS
+# ============================================
+
+# Pre-build validation (called by build-commons.sh if this function exists)
+# Return 0 for success, 1 for failure
+pre_build_validation() {
+  # Add your project-specific validation here
+
+  # Example: Check for uncommitted config changes
+  # if ! git diff-index --quiet HEAD -- config.json; then
+  #   echo "WARNING: Uncommitted changes in config.json"
+  #   read -p "Continue anyway? (y/N): " -n 1 -r
+  #   echo
+  #   [[ ! ${REPLY} =~ ^[Yy]$ ]] && return 1
+  # fi
+
+  # Example: Verify environment variables
+  # if [[ -z "${REQUIRED_ENV_VAR}" ]]; then
+  #   echo "ERROR: REQUIRED_ENV_VAR not set"
+  #   return 1
+  # fi
+
+  return 0
+}
+
+# Post-build validation (called by build-commons.sh if this function exists)
+# Return 0 for success, 1 for failure
+post_build_validation() {
+  # Add your project-specific validation here
+
+  # Example: Check build output
+  # if [[ ! -f "dist/index.js" ]]; then
+  #   echo "ERROR: Build did not produce expected output"
+  #   return 1
+  # fi
+
+  # Example: Run bundle size check
+  # local bundle_size=$(stat -f%z dist/bundle.js)
+  # local max_size=$((500 * 1024))  # 500KB
+  # if [[ ${bundle_size} -gt ${max_size} ]]; then
+  #   echo "WARNING: Bundle size ${bundle_size} bytes exceeds ${max_size} bytes"
+  #   return 1
+  # fi
+
+  return 0
+}
+
+# Pre-deploy validation (called by deploy-commons.sh if this function exists)
+# Return 0 for success, 1 for failure
+pre_deploy_validation() {
+  # Add your project-specific validation here
+
+  # Example: Check git status
+  # if ! git diff-index --quiet HEAD --; then
+  #   echo "ERROR: Uncommitted changes detected"
+  #   echo "Deploy from clean working directory only"
+  #   return 1
+  # fi
+
+  # Example: Verify on correct branch
+  # local current_branch=$(git branch --show-current)
+  # if [[ "${current_branch}" != "main" ]]; then
+  #   echo "WARNING: Deploying from branch '${current_branch}', not 'main'"
+  #   read -p "Continue? (y/N): " -n 1 -r
+  #   echo
+  #   [[ ! ${REPLY} =~ ^[Yy]$ ]] && return 1
+  # fi
+
+  return 0
+}
+
+# Post-deploy validation (called by deploy-commons.sh if this function exists)
+# Return 0 for success, 1 for failure
+post_deploy_validation() {
+  # Add your project-specific validation here
+
+  # Example: Tag deployment
+  # local version=$(jq -r .version package.json)
+  # git tag -a "deploy-${version}-$(date +%Y%m%d-%H%M%S)" -m "Deployed version ${version}"
+
+  return 0
+}
+
+# ============================================
+# PROJECT-SPECIFIC VARIABLES
+# ============================================
+
+# Add any other project-specific configuration here
+# export PROJECT_NAME="my-app"
+# export PROJECT_ENV="production"
+# export API_BASE_URL="https://api.example.com"
+
+# ============================================
+# USAGE EXAMPLES
+# ============================================
+
+# In build scripts:
+#   source "${HOME}/.claude/lib/build-commons.sh"
+#   [[ -f ".claude/config.sh" ]] && source ".claude/config.sh"
+#   run_preflight_checks
+#   # Your build commands here
+
+# In deploy scripts:
+#   source "${HOME}/.claude/lib/deploy-commons.sh"
+#   source ".claude/config.sh"
+#   verify_cloudflare_secrets "${DEPLOYMENT_REQUIRED_SECRETS[@]}"
+#   # Your deploy commands here
+#   run_endpoint_smoke_tests "${BASE_URL}" "${DEPLOYMENT_SMOKE_TEST_ENDPOINTS[@]}"
