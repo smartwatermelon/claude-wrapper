@@ -175,7 +175,7 @@ validate_secrets_file() {
 }
 
 # Detect non-interactive/automated contexts where 1Password should be skipped
-# Use canonical stdin TTY check instead of fragile parent process inspection
+# Use canonical stdin TTY check as primary signal
 SKIP_OP_AUTH=false
 
 # Check for explicit skip flag
@@ -188,6 +188,12 @@ fi
 if [[ ! -t 0 ]]; then
   SKIP_OP_AUTH=true
   debug_log "1Password auth skipped: stdin is not a TTY (non-interactive context)"
+fi
+
+# Additional checks for CI environments that may allocate PTYs
+if [[ "${CI:-false}" == "true" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]]; then
+  SKIP_OP_AUTH=true
+  debug_log "1Password auth skipped: running in CI environment"
 fi
 
 # 1Password session and secrets handling
@@ -364,6 +370,14 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
     secret_files+=("${arg#--env-file=}")
   done
 
+  # Create temp directory for all resolved secret files
+  # This ensures proper cleanup even if processing multiple files
+  temp_dir="$(mktemp -d)" || {
+    log_error "Failed to create temp directory for secret resolution"
+    exit 1
+  }
+  trap 'rm -rf "${temp_dir}"' EXIT
+
   # Process each secrets file using op inject --in-file/--out-file
   # This approach avoids manual parsing edge cases (CRLF, empty values, etc)
   # and preserves stdin as a TTY unlike op run
@@ -376,18 +390,33 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
       exit 1
     fi
 
-    # Create temp file for resolved secrets with proper cleanup
-    resolved_file="$(mktemp)" || {
+    # Create temp file for resolved secrets
+    resolved_file="${temp_dir}/resolved-$(basename "${secrets_file}")" || {
       log_error "Failed to create temp file for secret resolution"
       exit 1
     }
-    # shellcheck disable=SC2064
-    trap "rm -f '${resolved_file}'" EXIT
 
     # Inject 1Password references - fails if any reference cannot be resolved
     if ! op inject --in-file="${secrets_file}" --out-file="${resolved_file}" 2>&1; then
       log_error "Failed to inject secrets from ${secrets_file}"
-      rm -f "${resolved_file}"
+      exit 1
+    fi
+
+    # Verify op inject produced non-empty output
+    if [[ ! -s "${resolved_file}" ]]; then
+      log_error "op inject produced empty file for ${secrets_file}"
+      exit 1
+    fi
+
+    # Validate resolved file contains only safe variable assignments
+    # Allows quoted values but blocks command execution metacharacters
+    # Pattern matches: KEY=value, KEY="value", KEY='value', comments, blank lines
+    # Blocks: semicolons, backticks, $(), pipes, redirects outside quotes
+    safe_pattern="^([A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|[^;\\\`\$()&<>|[:space:]]+)|#.*|[[:space:]]*)$"
+    if grep -vE "${safe_pattern}" "${resolved_file}" >/dev/null 2>&1; then
+      log_error "Resolved secrets file contains unsafe content: ${secrets_file}"
+      debug_log "Unsafe lines found:"
+      grep -vE "${safe_pattern}" "${resolved_file}" >&2 || true
       exit 1
     fi
 
@@ -398,13 +427,11 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
     source "${resolved_file}" || {
       log_error "Failed to source resolved secrets from ${secrets_file}"
       set +a
-      rm -f "${resolved_file}"
       exit 1
     }
     set +a
 
     debug_log "Loaded secrets from ${secrets_file}"
-    rm -f "${resolved_file}"
   done
 
   debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
