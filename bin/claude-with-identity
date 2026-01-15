@@ -174,11 +174,42 @@ validate_secrets_file() {
   return 0
 }
 
+# Detect non-interactive/automated contexts where 1Password should be skipped
+# This prevents hangs when wrapper is called from git hooks, CI, or nested Claude invocations
+SKIP_OP_AUTH=false
+
+# Check for explicit skip flag
+if [[ "${CLAUDE_SKIP_OP_AUTH:-false}" == "true" ]]; then
+  SKIP_OP_AUTH=true
+  debug_log "1Password auth skipped: CLAUDE_SKIP_OP_AUTH=true"
+fi
+
+# Check if running in git hook context
+if [[ -n "${GIT_HOOK:-}" ]]; then
+  SKIP_OP_AUTH=true
+  debug_log "1Password auth skipped: running in git hook (${GIT_HOOK})"
+fi
+
+# Check if running in CI environment
+if [[ "${CI:-false}" == "true" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]] || [[ -n "${GITLAB_CI:-}" ]]; then
+  SKIP_OP_AUTH=true
+  debug_log "1Password auth skipped: running in CI environment"
+fi
+
+# Check if parent process is claude (indicates nested invocation from hook/analysis)
+if [[ -n "${PPID:-}" ]]; then
+  parent_cmd="$(ps -p "${PPID}" -o comm= 2>/dev/null || echo "")"
+  if [[ "${parent_cmd}" == *"claude"* ]] || [[ "${parent_cmd}" == *"node"* ]]; then
+    SKIP_OP_AUTH=true
+    debug_log "1Password auth skipped: parent process is ${parent_cmd} (likely nested invocation)"
+  fi
+fi
+
 # 1Password session and secrets handling
 OP_ENABLED=false
 OP_ENV_ARGS=()
 
-if command -v op &>/dev/null; then
+if command -v op &>/dev/null && [[ "${SKIP_OP_AUTH}" == "false" ]]; then
   OP_VERSION="$(op --version 2>/dev/null)" || OP_VERSION="unknown"
   debug_log "1Password CLI detected (version: ${OP_VERSION})"
 
@@ -254,7 +285,11 @@ if command -v op &>/dev/null; then
     debug_log "No active 1Password session, proceeding without secrets"
   fi
 else
-  debug_log "1Password CLI not found in PATH"
+  if [[ "${SKIP_OP_AUTH}" == "true" ]]; then
+    debug_log "1Password authentication skipped (automated/non-interactive context)"
+  else
+    debug_log "1Password CLI not found in PATH"
+  fi
 fi
 
 # Find and validate real claude binary
