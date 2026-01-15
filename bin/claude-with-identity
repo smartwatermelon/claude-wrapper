@@ -402,13 +402,8 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
       exit 1
     fi
 
-    # Verify op inject produced non-empty output
-    if [[ ! -s "${resolved_file}" ]]; then
-      log_error "op inject produced empty file for ${secrets_file}"
-      exit 1
-    fi
-
     # Validate resolved file contains only safe variable assignments
+    # Note: Empty files (from comment-only secrets files) are valid and handled by validation
     # Allows quoted values but blocks command execution metacharacters
     # Pattern matches: KEY=value, KEY="value", KEY='value', comments, blank lines
     # Blocks: semicolons, backticks, $(), pipes, redirects outside quotes
