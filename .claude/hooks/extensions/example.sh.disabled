@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Example Git Hook Extension (DISABLED by default)
+#
+# This file demonstrates how to create project-specific git hook extensions.
+# Extensions are discovered and executed by global hooks automatically.
+#
+# TO ENABLE THIS EXTENSION:
+#   1. Rename to remove .disabled suffix:
+#      mv example.sh.disabled my-validation.sh
+#   2. Customize the validation logic below
+#   3. Ensure it's executable:
+#      chmod +x .claude/hooks/extensions/my-validation.sh
+#
+# EXTENSION CONTRACT:
+#   - Exit 0: Check passed (allow git operation to proceed)
+#   - Exit 1: Check failed (block git operation)
+#   - Can use functions from ~/.claude/hooks/lib/hook-common.sh
+#   - Receives same arguments as parent hook (e.g., commit message file for commit-msg hook)
+#
+# AVAILABLE FUNCTIONS (from hook-common.sh):
+#   log_info "message"      - Blue informational message
+#   log_success "message"   - Green success message
+#   log_warn "message"      - Yellow warning message
+#   log_error "message"     - Red error message
+#   get_staged_files        - Get list of staged files
+#   get_repo_root          - Get repository root directory
+#   is_protected_branch    - Check if on main/master branch
+
+# ============================================
+# EXAMPLE 1: Block commits during business hours
+# ============================================
+
+check_business_hours() {
+  local current_hour=$(date +%H)
+
+  # Check if current time is during business hours (9 AM - 5 PM)
+  if [[ ${current_hour} -ge 9 && ${current_hour} -lt 17 ]]; then
+    log_warn "⏰ Commit during business hours detected"
+
+    # Check if commit message includes ticket reference
+    local commit_msg_file="$1"
+    if [[ -n "${commit_msg_file}" ]] && [[ -f "${commit_msg_file}" ]]; then
+      if ! grep -qE '(JIRA|TICKET|#)[- ]?[0-9]+' "${commit_msg_file}"; then
+        log_error "❌ Commits during business hours must reference a ticket"
+        echo "   Format: JIRA-123, TICKET-456, or #789"
+        return 1
+      fi
+    fi
+  fi
+
+  return 0
+}
+
+# ============================================
+# EXAMPLE 2: Check for TODO comments without issue references
+# ============================================
+
+check_todo_comments() {
+  # Get staged changes
+  local staged_changes=$(git diff --cached)
+
+  # Look for TODO comments without issue references
+  # Pattern: TODO without a # followed by digits
+  if echo "${staged_changes}" | grep -iE '^\+.*TODO(?! #[0-9])'; then
+    log_warn "⚠️  TODO comment without issue reference detected"
+    echo ""
+    echo "Found TODO comments that don't reference an issue:"
+    echo "${staged_changes}" | grep -iE '^\+.*TODO(?! #[0-9])' | sed 's/^/  /'
+    echo ""
+    echo "Please use format: TODO #123 (with GitHub issue number)"
+    return 1
+  fi
+
+  return 0
+}
+
+# ============================================
+# EXAMPLE 3: Prevent hardcoded secrets
+# ============================================
+
+check_hardcoded_secrets() {
+  # Get staged changes
+  local staged_changes=$(git diff --cached)
+
+  # Check for common secret patterns
+  local secret_patterns=(
+    'api[_-]?key.*=.*["\x27][a-zA-Z0-9]{32,}'
+    'secret[_-]?key.*=.*["\x27][a-zA-Z0-9]{32,}'
+    'password.*=.*["\x27][^"\x27]{8,}'
+    'token.*=.*["\x27][a-zA-Z0-9]{32,}'
+  )
+
+  for pattern in "${secret_patterns[@]}"; do
+    if echo "${staged_changes}" | grep -iE "^\+.*${pattern}"; then
+      log_error "❌ Potential hardcoded secret detected"
+      echo ""
+      echo "Pattern matched: ${pattern}"
+      echo ""
+      echo "Please use environment variables or secret management instead."
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# ============================================
+# EXAMPLE 4: Enforce code formatting
+# ============================================
+
+check_formatting() {
+  # Get list of staged files
+  local staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+
+  # Check if prettier is available
+  if ! command -v prettier &>/dev/null; then
+    log_warn "⚠️  Prettier not found, skipping format check"
+    return 0
+  fi
+
+  # Check JavaScript/TypeScript files
+  local js_files=$(echo "${staged_files}" | grep -E '\.(js|jsx|ts|tsx)$' || true)
+
+  if [[ -n "${js_files}" ]]; then
+    local unformatted_files=$(echo "${js_files}" | xargs prettier --check 2>&1 | grep -E '^/' || true)
+
+    if [[ -n "${unformatted_files}" ]]; then
+      log_error "❌ Unformatted files detected"
+      echo ""
+      echo "The following files are not formatted:"
+      echo "${unformatted_files}" | sed 's/^/  /'
+      echo ""
+      echo "Run: prettier --write <files>"
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
+# ============================================
+# EXAMPLE 5: Validate commit message format
+# ============================================
+
+check_commit_message_format() {
+  local commit_msg_file="$1"
+
+  if [[ -z "${commit_msg_file}" ]] || [[ ! -f "${commit_msg_file}" ]]; then
+    # Not a commit message hook call
+    return 0
+  fi
+
+  local commit_msg=$(cat "${commit_msg_file}")
+
+  # Skip merge commits
+  if [[ "${commit_msg}" =~ ^Merge ]]; then
+    return 0
+  fi
+
+  # Check conventional commit format: type(scope): subject
+  if ! echo "${commit_msg}" | grep -qE '^(feat|fix|docs|style|refactor|test|chore)(\([a-z0-9-]+\))?: .+'; then
+    log_error "❌ Commit message does not follow conventional format"
+    echo ""
+    echo "Current message:"
+    echo "  ${commit_msg}"
+    echo ""
+    echo "Expected format:"
+    echo "  type(scope): subject"
+    echo ""
+    echo "Types: feat, fix, docs, style, refactor, test, chore"
+    echo "Example: feat(auth): add JWT token refresh"
+    return 1
+  fi
+
+  return 0
+}
+
+# ============================================
+# MAIN EXECUTION
+# ============================================
+
+main() {
+  # Uncomment the checks you want to enable:
+
+  # check_business_hours "$@" || exit 1
+  # check_todo_comments || exit 1
+  # check_hardcoded_secrets || exit 1
+  # check_formatting || exit 1
+  # check_commit_message_format "$@" || exit 1
+
+  # If all checks pass (or none are enabled)
+  log_success "✅ Example validation passed"
+  exit 0
+}
+
+# Run main function
+main "$@"
