@@ -365,6 +365,12 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
         continue
       fi
 
+      # Verify line contains = character before parsing
+      if [[ "${line}" != *"="* ]]; then
+        log_warn "Skipping malformed line (no '=' found): ${line}"
+        continue
+      fi
+
       # Split on first = only using parameter expansion to preserve values with =
       key="${line%%=*}"
       value="${line#*=}"
