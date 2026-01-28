@@ -141,6 +141,42 @@ else
   debug_log "GitHub token file not found: ${CLAUDE_GH_TOKEN_FILE}"
 fi
 
+# Normalize env file by quoting unquoted values
+# This ensures values with special characters (like \n in private keys) pass safety checks
+# and source correctly. Uses single quotes to preserve literal values.
+normalize_env_file() {
+  local input_file="$1"
+  local output_file="$2"
+  local line key value
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # Skip blank lines and comments
+    if [[ -z "${line}" ]] || [[ "${line}" =~ ^[[:space:]]*# ]]; then
+      echo "${line}"
+      continue
+    fi
+
+    # Match KEY=value pattern
+    if [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+
+      # If already quoted (starts and ends with matching quotes), pass through
+      if [[ "${value}" =~ ^\".*\"$ ]] || [[ "${value}" =~ ^\'.*\'$ ]]; then
+        echo "${line}"
+      else
+        # Wrap in single quotes, escaping any internal single quotes
+        # Replace ' with '\'' (end quote, escaped literal quote, start quote)
+        value="${value//\'/\'\\\'\'}"
+        echo "${key}='${value}'"
+      fi
+    else
+      # Non-assignment lines pass through unchanged
+      echo "${line}"
+    fi
+  done <"${input_file}" >"${output_file}"
+}
+
 # Validate secrets file with path canonicalization
 validate_secrets_file() {
   local file="$1"
@@ -406,12 +442,19 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
       exit 1
     fi
 
+    # Normalize resolved file: quote unquoted values to handle special characters
+    # This ensures values like private keys with \n sequences pass safety checks
+    normalized_file="${temp_dir}/normalized-$(basename "${secrets_file}")"
+    normalize_env_file "${resolved_file}" "${normalized_file}"
+    mv "${normalized_file}" "${resolved_file}"
+
     # Validate resolved file contains only safe variable assignments
     # Note: Empty files (from comment-only secrets files) are valid and handled by validation
     # Allows quoted values but blocks command execution metacharacters
-    # Pattern matches: KEY=value, KEY="value", KEY='value', comments, blank lines
+    # Pattern matches: KEY=value, KEY="value", KEY='value' (with '\'' escapes), comments, blank lines
     # Blocks: semicolons, backticks, $(), pipes, redirects outside quotes
-    safe_pattern="^([A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|[^;\\\`\$()&<>|[:space:]]+)|#.*|[[:space:]]*)$"
+    # Single-quote pattern handles '\'' escape sequences (e.g., 'it'\''s working')
+    safe_pattern="^([A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'(\\\\''[^']*')*|[^;\\\`\$()&<>|[:space:]]+)|#.*|[[:space:]]*)$"
     if grep -vE "${safe_pattern}" "${resolved_file}" >/dev/null 2>&1; then
       log_error "Resolved secrets file contains unsafe content: ${secrets_file}"
       debug_log "Unsafe lines found:"
