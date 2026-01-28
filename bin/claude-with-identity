@@ -451,9 +451,10 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
     # Validate resolved file contains only safe variable assignments
     # Note: Empty files (from comment-only secrets files) are valid and handled by validation
     # Allows quoted values but blocks command execution metacharacters
-    # Pattern matches: KEY=value, KEY="value", KEY='value', comments, blank lines
+    # Pattern matches: KEY=value, KEY="value", KEY='value' (with '\'' escapes), comments, blank lines
     # Blocks: semicolons, backticks, $(), pipes, redirects outside quotes
-    safe_pattern="^([A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|[^;\\\`\$()&<>|[:space:]]+)|#.*|[[:space:]]*)$"
+    # Single-quote pattern handles '\'' escape sequences (e.g., 'it'\''s working')
+    safe_pattern="^([A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'(\\\\''[^']*')*|[^;\\\`\$()&<>|[:space:]]+)|#.*|[[:space:]]*)$"
     if grep -vE "${safe_pattern}" "${resolved_file}" >/dev/null 2>&1; then
       log_error "Resolved secrets file contains unsafe content: ${secrets_file}"
       debug_log "Unsafe lines found:"
