@@ -476,6 +476,35 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
     debug_log "Loaded secrets from ${secrets_file}"
   done
 
+  # Project-specific pre-launch hook (runs after secrets loaded, before claude starts)
+  # Security: requires executable permission, passes ownership/permission checks,
+  # and must resolve to a path within the git repository (no symlink escape)
+  PRE_LAUNCH_HOOK="${GIT_ROOT}/.claude/pre-launch.sh"
+  if [[ -n "${GIT_ROOT:-}" ]] && [[ -f "${PRE_LAUNCH_HOOK}" ]]; then
+    # Canonicalize and validate hook path (prevent symlink escape)
+    if validated_hook="$(canonicalize_path "${PRE_LAUNCH_HOOK}" 2>/dev/null)"; then
+      if path_is_under "${validated_hook}" "${GIT_ROOT}"; then
+        if [[ -x "${validated_hook}" ]] && check_file_permissions "${validated_hook}"; then
+          debug_log "Running project pre-launch hook: ${validated_hook}"
+          # shellcheck source=/dev/null
+          if ! source "${validated_hook}"; then
+            log_error "Pre-launch hook failed: ${validated_hook}"
+            log_error "Fix the hook script or remove it to start Claude"
+            exit 1
+          fi
+        else
+          log_error "Pre-launch hook has insecure permissions or is not executable: ${validated_hook}"
+          log_error "Fix permissions (chmod 700) or remove the hook to start Claude"
+          exit 1
+        fi
+      else
+        log_error "Pre-launch hook path escapes git repository: ${validated_hook}"
+        log_error "Remove the symlink or use a hook file within the repository"
+        exit 1
+      fi
+    fi
+  fi
+
   debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
   exec "${CLAUDE_BIN}" "$@"
 else
