@@ -477,15 +477,23 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
   done
 
   # Project-specific pre-launch hook (runs after secrets loaded, before claude starts)
-  # Security: requires executable permission and passes same ownership/permission checks as secrets files
+  # Security: requires executable permission, passes ownership/permission checks,
+  # and must resolve to a path within the git repository (no symlink escape)
   PRE_LAUNCH_HOOK="${GIT_ROOT}/.claude/pre-launch.sh"
-  if [[ -n "${GIT_ROOT:-}" ]] && [[ -x "${PRE_LAUNCH_HOOK}" ]]; then
-    if check_file_permissions "${PRE_LAUNCH_HOOK}"; then
-      debug_log "Running project pre-launch hook: ${PRE_LAUNCH_HOOK}"
-      # shellcheck source=/dev/null
-      source "${PRE_LAUNCH_HOOK}"
-    else
-      warn_log "Skipping pre-launch hook - insecure permissions: ${PRE_LAUNCH_HOOK}"
+  if [[ -n "${GIT_ROOT:-}" ]] && [[ -f "${PRE_LAUNCH_HOOK}" ]]; then
+    # Canonicalize and validate hook path (prevent symlink escape)
+    if validated_hook="$(canonicalize_path "${PRE_LAUNCH_HOOK}" 2>/dev/null)"; then
+      if path_is_under "${validated_hook}" "${GIT_ROOT}"; then
+        if [[ -x "${validated_hook}" ]] && check_file_permissions "${validated_hook}"; then
+          debug_log "Running project pre-launch hook: ${validated_hook}"
+          # shellcheck source=/dev/null
+          source "${validated_hook}"
+        else
+          log_warn "Skipping pre-launch hook - not executable or insecure permissions: ${validated_hook}"
+        fi
+      else
+        log_error "Pre-launch hook path escapes git repository, refusing to load"
+      fi
     fi
   fi
 
