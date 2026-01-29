@@ -476,6 +476,19 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
     debug_log "Loaded secrets from ${secrets_file}"
   done
 
+  # Project-specific pre-launch hook (runs after secrets loaded, before claude starts)
+  # Security: requires executable permission and passes same ownership/permission checks as secrets files
+  PRE_LAUNCH_HOOK="${GIT_ROOT}/.claude/pre-launch.sh"
+  if [[ -n "${GIT_ROOT:-}" ]] && [[ -x "${PRE_LAUNCH_HOOK}" ]]; then
+    if check_file_permissions "${PRE_LAUNCH_HOOK}"; then
+      debug_log "Running project pre-launch hook: ${PRE_LAUNCH_HOOK}"
+      # shellcheck source=/dev/null
+      source "${PRE_LAUNCH_HOOK}"
+    else
+      warn_log "Skipping pre-launch hook - insecure permissions: ${PRE_LAUNCH_HOOK}"
+    fi
+  fi
+
   debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
   exec "${CLAUDE_BIN}" "$@"
 else
