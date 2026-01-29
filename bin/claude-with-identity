@@ -487,12 +487,20 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
         if [[ -x "${validated_hook}" ]] && check_file_permissions "${validated_hook}"; then
           debug_log "Running project pre-launch hook: ${validated_hook}"
           # shellcheck source=/dev/null
-          source "${validated_hook}"
+          if ! source "${validated_hook}"; then
+            log_error "Pre-launch hook failed: ${validated_hook}"
+            log_error "Fix the hook script or remove it to start Claude"
+            exit 1
+          fi
         else
-          log_warn "Skipping pre-launch hook - not executable or insecure permissions: ${validated_hook}"
+          log_error "Pre-launch hook has insecure permissions or is not executable: ${validated_hook}"
+          log_error "Fix permissions (chmod 700) or remove the hook to start Claude"
+          exit 1
         fi
       else
-        log_error "Pre-launch hook path escapes git repository, refusing to load"
+        log_error "Pre-launch hook path escapes git repository: ${validated_hook}"
+        log_error "Remove the symlink or use a hook file within the repository"
+        exit 1
       fi
     fi
   fi
