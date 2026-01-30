@@ -8,8 +8,8 @@ This document describes the security hardening measures implemented in the `clau
 
 The wrapper follows defense-in-depth principles:
 
-1. **Fail-safe defaults**: Refuse to operate rather than risk exposure
-2. **Least privilege**: Only load secrets with strict permission requirements
+1. **Secure defaults**: Auto-fix insecure permissions rather than risk exposure or block operation
+2. **Least privilege**: Enforce strict permission requirements (auto-fixed if needed)
 3. **Path validation**: Prevent traversal and symlink attacks
 4. **Binary integrity**: Validate the Claude binary before execution
 5. **Audit trail**: Debug logging for security-relevant events
@@ -34,28 +34,31 @@ The wrapper follows defense-in-depth principles:
 
 ## Security Features
 
-### 1. Blocking Permission Checks
+### 1. Permission Checks with Auto-Fix
 
-**Implementation**: `check_file_permissions()` (lines 53-92)
+**Implementation**: `check_file_permissions()` and `ensure_secure_permissions()` (lines 53-141)
 
 **Behavior**:
 
-- **Refuse** to load files that are world-readable (last digit != 0)
-- **Refuse** to load files that are group-readable with incorrect permissions
-- **Refuse** to load files not owned by the current user
-- **Exit immediately** if GitHub token has insecure permissions
+- **Refuse** to load files not owned by the current user (cannot auto-fix ownership)
+- **Warn and auto-fix** files that are group-readable or world-readable
+- For secrets files (`.op`): auto-fix to `400` (read-only for owner)
+- For pre-launch hooks: auto-fix to `700` (executable for owner only)
 
-**Rationale**: Advisory warnings are insufficient for credential files. If permissions are wrong, the wrapper must refuse to operate.
+**Rationale**: Insecure permissions must be corrected before loading credentials. Auto-fixing ensures secure permissions are enforced without requiring manual intervention, while still warning the user about the issue.
 
 **Example**:
 
 ```bash
-# BLOCKED: World-readable token file
-$ ls -la ~/.config/claude-code/gh-token
--rw-r--r-- 1 user user 40 Jan 14 15:00 gh-token
+# AUTO-FIXED: World-readable secrets file
+$ ls -la .claude/secrets.op
+-rw-r--r-- 1 user user 40 Jan 14 15:00 secrets.op
 
 $ claude
-ERROR: GitHub token file has insecure permissions, refusing to load
+WARNING: .claude/secrets.op has group permissions (644)
+WARNING: .claude/secrets.op has world permissions (644)
+WARNING: Auto-fixing permissions: chmod 400 .claude/secrets.op
+# Continues loading with secure permissions
 ```
 
 ### 2. Path Canonicalization
@@ -159,10 +162,11 @@ ERROR: Claude binary failed security validation, refusing to execute
 
 ### Usability vs Security
 
-**Strict permission enforcement**:
+**Permission enforcement with auto-fix**:
 
-- **Pro**: Prevents credential exposure
-- **Con**: Users must manually fix permissions with `chmod 600`
+- **Pro**: Prevents credential exposure while ensuring usability
+- **Pro**: Automatically corrects insecure permissions (no manual intervention needed)
+- **Con**: Modifies file permissions without explicit user action (mitigated by warning messages)
 
 **Git repository requirement for project secrets**:
 
@@ -266,7 +270,7 @@ If handling payment card data:
 **Removed insecure patterns**:
 
 - ❌ `eval` of external command output (1Password v1 pattern)
-- ❌ Advisory-only permission warnings
+- ❌ Advisory-only permission warnings (replaced with warn-and-fix that enforces secure permissions)
 - ❌ CWD-relative secret paths without validation
 - ❌ Broken permission check logic (original v2.0.0 had logic error)
 - ❌ Bypassable boundary checks (fixed string prefix match vulnerability)
