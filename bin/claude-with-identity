@@ -89,6 +89,57 @@ check_file_permissions() {
   return 0
 }
 
+# Ensure secure permissions - warns and fixes instead of blocking
+# Usage: ensure_secure_permissions <file> <target_perms>
+# Example: ensure_secure_permissions "/path/to/file" "700"
+ensure_secure_permissions() {
+  local file="$1"
+  local target_perms="$2"
+  local perms
+
+  # Get permissions (Darwin vs Linux stat syntax)
+  perms="$(stat -f '%A' "${file}" 2>/dev/null || stat -c '%a' "${file}" 2>/dev/null || echo "unknown")"
+
+  if [[ "${perms}" == "unknown" ]]; then
+    log_error "Could not check permissions for ${file}"
+    return 1
+  fi
+
+  # Verify file is owned by current user first
+  local file_owner
+  local current_uid
+  file_owner="$(stat -f '%u' "${file}" 2>/dev/null || stat -c '%u' "${file}" 2>/dev/null || echo "unknown")"
+  current_uid="$(id -u)" || current_uid="unknown"
+  if [[ "${file_owner}" != "${current_uid}" ]]; then
+    log_error "${file} is not owned by current user (owner: ${file_owner}, current: ${current_uid})"
+    return 1
+  fi
+
+  # Check if permissions need fixing (group or world has any permissions)
+  local needs_fix=false
+  if [[ "${perms:1:1}" != "0" ]]; then
+    log_warning "${file} has group permissions (${perms})"
+    needs_fix=true
+  fi
+  if [[ "${perms: -1}" != "0" ]]; then
+    log_warning "${file} has world permissions (${perms})"
+    needs_fix=true
+  fi
+
+  if [[ "${needs_fix}" == "true" ]]; then
+    log_warning "Auto-fixing permissions: chmod ${target_perms} ${file}"
+    if ! chmod "${target_perms}" "${file}"; then
+      log_error "Failed to fix permissions on ${file}"
+      return 1
+    fi
+    debug_log "Fixed permissions on ${file} to ${target_perms}"
+  else
+    debug_log "File permissions OK for ${file}: ${perms}"
+  fi
+
+  return 0
+}
+
 # Canonicalize and validate path - prevents traversal attacks
 canonicalize_path() {
   local path="$1"
@@ -199,9 +250,9 @@ validate_secrets_file() {
     return 1
   fi
 
-  # BLOCKING permission check
-  if ! check_file_permissions "${canonical}"; then
-    log_error "Refusing to load secrets from ${canonical} due to insecure permissions"
+  # Ensure secure permissions (warns and auto-fixes if needed)
+  if ! ensure_secure_permissions "${canonical}" "400"; then
+    log_error "Refusing to load secrets from ${canonical} due to permission issues"
     return 1
   fi
 
@@ -484,17 +535,25 @@ if [[ "${OP_ENABLED}" == "true" ]]; then
     # Canonicalize and validate hook path (prevent symlink escape)
     if validated_hook="$(canonicalize_path "${PRE_LAUNCH_HOOK}" 2>/dev/null)"; then
       if path_is_under "${validated_hook}" "${GIT_ROOT}"; then
-        if [[ -x "${validated_hook}" ]] && check_file_permissions "${validated_hook}"; then
-          debug_log "Running project pre-launch hook: ${validated_hook}"
-          # shellcheck source=/dev/null
-          if ! source "${validated_hook}"; then
-            log_error "Pre-launch hook failed: ${validated_hook}"
-            log_error "Fix the hook script or remove it to start Claude"
+        # Ensure secure permissions (warns and auto-fixes to 700 if needed)
+        if ! ensure_secure_permissions "${validated_hook}" "700"; then
+          log_error "Cannot fix permissions on pre-launch hook: ${validated_hook}"
+          exit 1
+        fi
+        # After ensure_secure_permissions with 700, file should be executable
+        # Double-check executability in case the file was created with wrong perms
+        if [[ ! -x "${validated_hook}" ]]; then
+          log_warning "Pre-launch hook is not executable, fixing: ${validated_hook}"
+          if ! chmod +x "${validated_hook}"; then
+            log_error "Failed to make pre-launch hook executable: ${validated_hook}"
             exit 1
           fi
-        else
-          log_error "Pre-launch hook has insecure permissions or is not executable: ${validated_hook}"
-          log_error "Fix permissions (chmod 700) or remove the hook to start Claude"
+        fi
+        debug_log "Running project pre-launch hook: ${validated_hook}"
+        # shellcheck source=/dev/null
+        if ! source "${validated_hook}"; then
+          log_error "Pre-launch hook failed: ${validated_hook}"
+          log_error "Fix the hook script or remove it to start Claude"
           exit 1
         fi
       else
