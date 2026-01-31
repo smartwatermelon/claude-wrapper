@@ -19,6 +19,11 @@ log_warn() {
   echo "WARNING: $*" >&2
 }
 
+# Alias for backward compatibility with pre-launch scripts
+warn_log() {
+  log_warn "$@"
+}
+
 # Git identity for Claude Code operations
 readonly CLAUDE_GIT_NAME="Claude Code Bot"
 readonly CLAUDE_GIT_EMAIL="claude-code@smartwatermelon.github"
