@@ -296,76 +296,106 @@ if command -v op &>/dev/null && [[ "${SKIP_OP_AUTH}" == "false" ]]; then
   OP_VERSION="$(op --version 2>/dev/null)" || OP_VERSION="unknown"
   debug_log "1Password CLI detected (version: ${OP_VERSION})"
 
-  echo "[Claude wrapper] Checking 1Password authentication..." >&2
+  # First check if any secrets files exist (before auth)
+  # This avoids prompting for 1Password auth when there's nothing to inject
+  HAS_SECRETS_FILES=false
 
-  # Check for active session and attempt signin if needed
-  if ! op account get &>/dev/null; then
-    debug_log "No active 1Password session, attempting signin..."
-
-    # Attempt signin (may succeed silently via app integration)
-    # Use || true to ignore exit code - we'll check session status next
-    # stderr is NOT suppressed so user can see diagnostic errors
-    op signin || true
+  # Check global secrets
+  if [[ -f "${CLAUDE_OP_GLOBAL_SECRETS}" ]]; then
+    HAS_SECRETS_FILES=true
+    debug_log "Found global secrets file: ${CLAUDE_OP_GLOBAL_SECRETS}"
   fi
 
-  # Now check if we have a valid session (single source of truth)
-  if op account get &>/dev/null; then
-    debug_log "1Password session active"
-    # Check for secrets files in priority order
-    # Later files override earlier ones (1Password behavior)
+  # Check project/local secrets (if in a git repo)
+  if git rev-parse --git-dir &>/dev/null; then
+    GIT_ROOT_CHECK="$(git rev-parse --show-toplevel 2>/dev/null)"
+    if [[ -n "${GIT_ROOT_CHECK}" ]]; then
+      if [[ -f "${GIT_ROOT_CHECK}/${CLAUDE_OP_PROJECT_SECRETS}" ]]; then
+        HAS_SECRETS_FILES=true
+        debug_log "Found project secrets file: ${GIT_ROOT_CHECK}/${CLAUDE_OP_PROJECT_SECRETS}"
+      fi
+      if [[ -f "${GIT_ROOT_CHECK}/${CLAUDE_OP_LOCAL_SECRETS}" ]]; then
+        HAS_SECRETS_FILES=true
+        debug_log "Found local secrets file: ${GIT_ROOT_CHECK}/${CLAUDE_OP_LOCAL_SECRETS}"
+      fi
+    fi
+  fi
 
-    # Global secrets (always absolute path, safe)
-    if validated_path="$(validate_secrets_file "${CLAUDE_OP_GLOBAL_SECRETS}")"; then
-      OP_ENV_ARGS+=(--env-file="${validated_path}")
-      debug_log "Added global secrets (validated)"
+  if [[ "${HAS_SECRETS_FILES}" == "false" ]]; then
+    debug_log "No secrets files found, skipping 1Password authentication"
+  else
+    # Only authenticate if we have secrets files to process
+    echo "[Claude wrapper] Checking 1Password authentication..." >&2
+
+    # Check for active session and attempt signin if needed
+    if ! op account get &>/dev/null; then
+      debug_log "No active 1Password session, attempting signin..."
+
+      # Attempt signin (may succeed silently via app integration)
+      # Use || true to ignore exit code - we'll check session status next
+      # stderr is NOT suppressed so user can see diagnostic errors
+      op signin || true
     fi
 
-    # Project secrets - only load if we're in a git repository
-    # This prevents loading arbitrary secrets from untrusted directories
-    if git rev-parse --git-dir &>/dev/null; then
-      # Get git repo root and canonicalize it
-      GIT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
-      if [[ -n "${GIT_ROOT_RAW}" ]]; then
-        # Canonicalize git root to handle symlinks
-        GIT_ROOT="$(realpath "${GIT_ROOT_RAW}" 2>/dev/null || echo "${GIT_ROOT_RAW}")"
+    # Now check if we have a valid session (single source of truth)
+    if op account get &>/dev/null; then
+      debug_log "1Password session active"
+      # Check for secrets files in priority order
+      # Later files override earlier ones (1Password behavior)
 
-        PROJECT_SECRETS="${GIT_ROOT}/${CLAUDE_OP_PROJECT_SECRETS}"
-        if validated_path="$(validate_secrets_file "${PROJECT_SECRETS}")"; then
-          # Ensure canonical path is contained within git repo (proper boundary check)
-          if path_is_under "${validated_path}" "${GIT_ROOT}"; then
-            OP_ENV_ARGS+=(--env-file="${validated_path}")
-            debug_log "Added project secrets (validated)"
-          else
-            log_error "Project secrets path escapes git repository, refusing to load"
+      # Global secrets (always absolute path, safe)
+      if validated_path="$(validate_secrets_file "${CLAUDE_OP_GLOBAL_SECRETS}")"; then
+        OP_ENV_ARGS+=(--env-file="${validated_path}")
+        debug_log "Added global secrets (validated)"
+      fi
+
+      # Project secrets - only load if we're in a git repository
+      # This prevents loading arbitrary secrets from untrusted directories
+      if git rev-parse --git-dir &>/dev/null; then
+        # Get git repo root and canonicalize it
+        GIT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
+        if [[ -n "${GIT_ROOT_RAW}" ]]; then
+          # Canonicalize git root to handle symlinks
+          GIT_ROOT="$(realpath "${GIT_ROOT_RAW}" 2>/dev/null || echo "${GIT_ROOT_RAW}")"
+
+          PROJECT_SECRETS="${GIT_ROOT}/${CLAUDE_OP_PROJECT_SECRETS}"
+          if validated_path="$(validate_secrets_file "${PROJECT_SECRETS}")"; then
+            # Ensure canonical path is contained within git repo (proper boundary check)
+            if path_is_under "${validated_path}" "${GIT_ROOT}"; then
+              OP_ENV_ARGS+=(--env-file="${validated_path}")
+              debug_log "Added project secrets (validated)"
+            else
+              log_error "Project secrets path escapes git repository, refusing to load"
+            fi
+          fi
+
+          LOCAL_SECRETS="${GIT_ROOT}/${CLAUDE_OP_LOCAL_SECRETS}"
+          if validated_path="$(validate_secrets_file "${LOCAL_SECRETS}")"; then
+            # Ensure canonical path is contained within git repo (proper boundary check)
+            if path_is_under "${validated_path}" "${GIT_ROOT}"; then
+              OP_ENV_ARGS+=(--env-file="${validated_path}")
+              debug_log "Added local secrets (validated)"
+            else
+              log_error "Local secrets path escapes git repository, refusing to load"
+            fi
           fi
         fi
+      else
+        debug_log "Not in a git repository, skipping project/local secrets"
+      fi
 
-        LOCAL_SECRETS="${GIT_ROOT}/${CLAUDE_OP_LOCAL_SECRETS}"
-        if validated_path="$(validate_secrets_file "${LOCAL_SECRETS}")"; then
-          # Ensure canonical path is contained within git repo (proper boundary check)
-          if path_is_under "${validated_path}" "${GIT_ROOT}"; then
-            OP_ENV_ARGS+=(--env-file="${validated_path}")
-            debug_log "Added local secrets (validated)"
-          else
-            log_error "Local secrets path escapes git repository, refusing to load"
-          fi
-        fi
+      # Enable 1Password if we have at least one secrets file
+      if [[ ${#OP_ENV_ARGS[@]} -gt 0 ]]; then
+        OP_ENABLED=true
+        debug_log "1Password enabled with ${#OP_ENV_ARGS[@]} secrets file(s)"
+      else
+        debug_log "No secrets files found, 1Password disabled"
       fi
     else
-      debug_log "Not in a git repository, skipping project/local secrets"
+      # No valid session - authentication failed or was cancelled
+      log_warn "1Password authentication failed or cancelled - continuing without secrets"
+      debug_log "No active 1Password session, proceeding without secrets"
     fi
-
-    # Enable 1Password if we have at least one secrets file
-    if [[ ${#OP_ENV_ARGS[@]} -gt 0 ]]; then
-      OP_ENABLED=true
-      debug_log "1Password enabled with ${#OP_ENV_ARGS[@]} secrets file(s)"
-    else
-      debug_log "No secrets files found, 1Password disabled"
-    fi
-  else
-    # No valid session - authentication failed or was cancelled
-    log_warn "1Password authentication failed or cancelled - continuing without secrets"
-    debug_log "No active 1Password session, proceeding without secrets"
   fi
 else
   if [[ "${SKIP_OP_AUTH}" == "true" ]]; then
