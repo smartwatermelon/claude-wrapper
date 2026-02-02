@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the security hardening measures implemented in the `claude-with-identity` wrapper to protect credentials and prevent common attack vectors.
+This document describes the security hardening measures implemented in the `claude-wrapper` wrapper to protect credentials and prevent common attack vectors.
 
 ## Security Principles
 
@@ -130,7 +130,7 @@ DEBUG: Not in a git repository, skipping project/local secrets
 # BLOCKED: World-writable claude binary
 $ chmod 777 ~/.local/bin/claude
 
-$ claude-with-identity
+$ claude-wrapper
 ERROR: Claude binary is world-writable (777): /Users/user/.local/bin/claude
 ERROR: Claude binary failed security validation, refusing to execute
 ```

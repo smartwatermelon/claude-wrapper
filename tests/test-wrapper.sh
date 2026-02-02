@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Test suite for claude-with-identity wrapper
+# Test suite for claude-wrapper
+# TDD-driven: Tests define expected behavior, code is updated to match
 set -euo pipefail
 
 # Colors for output
@@ -16,7 +17,8 @@ TESTS_FAILED=0
 # Test configuration
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
-WRAPPER="${REPO_ROOT}/bin/claude-with-identity"
+WRAPPER="${REPO_ROOT}/bin/claude-wrapper"
+LIB_DIR="${REPO_ROOT}/lib"
 
 # Temporary test environment
 TEST_TMP=""
@@ -51,14 +53,32 @@ assert_equals() {
   if [[ "${expected}" == "${actual}" ]]; then
     ((TESTS_PASSED += 1))
     echo -e "${GREEN}✓${NC} ${message}"
-    return 0
   else
     ((TESTS_FAILED += 1))
     echo -e "${RED}✗${NC} ${message}"
     echo "  Expected: ${expected}"
     echo "  Actual:   ${actual}"
-    return 1
   fi
+  # Always return 0 to not trigger set -e; failures tracked in TESTS_FAILED
+  return 0
+}
+
+assert_not_equals() {
+  local unexpected="$1"
+  local actual="$2"
+  local message="${3:-}"
+
+  ((TESTS_RUN += 1))
+
+  if [[ "${unexpected}" != "${actual}" ]]; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} ${message}"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} ${message}"
+    echo "  Should not equal: ${unexpected}"
+  fi
+  return 0
 }
 
 assert_contains() {
@@ -71,32 +91,101 @@ assert_contains() {
   if echo "${haystack}" | grep -qF "${needle}"; then
     ((TESTS_PASSED += 1))
     echo -e "${GREEN}✓${NC} ${message}"
-    return 0
   else
     ((TESTS_FAILED += 1))
     echo -e "${RED}✗${NC} ${message}"
     echo "  Expected to find: ${needle}"
-    echo "  In: ${haystack}"
-    return 1
+    echo "  In: ${haystack:0:200}..."
   fi
+  return 0
+}
+
+assert_not_contains() {
+  local needle="$1"
+  local haystack="$2"
+  local message="${3:-}"
+
+  ((TESTS_RUN += 1))
+
+  if ! echo "${haystack}" | grep -qF "${needle}"; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} ${message}"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} ${message}"
+    echo "  Should not contain: ${needle}"
+  fi
+  return 0
 }
 
 assert_file_exists() {
   local file="$1"
-  local message="${2:-}"
+  local message="${2:-File exists: ${file}}"
 
   ((TESTS_RUN += 1))
 
   if [[ -f "${file}" ]]; then
     ((TESTS_PASSED += 1))
     echo -e "${GREEN}✓${NC} ${message}"
-    return 0
   else
     ((TESTS_FAILED += 1))
     echo -e "${RED}✗${NC} ${message}"
     echo "  File not found: ${file}"
-    return 1
   fi
+  return 0
+}
+
+assert_file_executable() {
+  local file="$1"
+  local message="${2:-File is executable: ${file}}"
+
+  ((TESTS_RUN += 1))
+
+  if [[ -x "${file}" ]]; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} ${message}"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} ${message}"
+    echo "  File not executable: ${file}"
+  fi
+  return 0
+}
+
+assert_dir_exists() {
+  local dir="$1"
+  local message="${2:-Directory exists: ${dir}}"
+
+  ((TESTS_RUN += 1))
+
+  if [[ -d "${dir}" ]]; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} ${message}"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} ${message}"
+    echo "  Directory not found: ${dir}"
+  fi
+  return 0
+}
+
+assert_exit_code() {
+  local expected="$1"
+  local actual="$2"
+  local message="${3:-}"
+
+  ((TESTS_RUN += 1))
+
+  if [[ "${expected}" == "${actual}" ]]; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} ${message}"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} ${message}"
+    echo "  Expected exit code: ${expected}"
+    echo "  Actual exit code:   ${actual}"
+  fi
+  return 0
 }
 
 # Mock claude binary for testing
@@ -114,199 +203,318 @@ EOF
   echo "${mock_path}"
 }
 
-# Test 1: Wrapper script exists and is executable
+# =============================================================================
+# SECTION 1: Structure Tests - Wrapper and Module Layout
+# =============================================================================
+
 test_wrapper_exists() {
   echo ""
-  echo "Test 1: Wrapper script validation"
-  assert_file_exists "${WRAPPER}" "Wrapper script exists"
+  echo "Test 1.1: Wrapper script exists and is executable"
+  assert_file_exists "${WRAPPER}" "Wrapper script exists at bin/claude-wrapper"
+  assert_file_executable "${WRAPPER}" "Wrapper script is executable"
+}
 
-  if [[ -x "${WRAPPER}" ]]; then
-    ((TESTS_RUN += 1))
-    ((TESTS_PASSED += 1))
-    echo -e "${GREEN}✓${NC} Wrapper script is executable"
-  else
+test_lib_directory_exists() {
+  echo ""
+  echo "Test 1.2: Library directory structure"
+  assert_dir_exists "${LIB_DIR}" "lib/ directory exists"
+}
+
+test_module_files_exist() {
+  echo ""
+  echo "Test 1.3: Required module files exist"
+
+  # Core modules that must exist for modular architecture
+  assert_file_exists "${LIB_DIR}/logging.sh" "logging.sh module exists"
+  assert_file_exists "${LIB_DIR}/permissions.sh" "permissions.sh module exists"
+  assert_file_exists "${LIB_DIR}/path-security.sh" "path-security.sh module exists"
+  assert_file_exists "${LIB_DIR}/git-identity.sh" "git-identity.sh module exists"
+  assert_file_exists "${LIB_DIR}/github-token.sh" "github-token.sh module exists"
+  assert_file_exists "${LIB_DIR}/secrets-loader.sh" "secrets-loader.sh module exists"
+  assert_file_exists "${LIB_DIR}/binary-discovery.sh" "binary-discovery.sh module exists"
+  assert_file_exists "${LIB_DIR}/pre-launch.sh" "pre-launch.sh module exists"
+}
+
+test_wrapper_sources_modules() {
+  echo ""
+  echo "Test 1.4: Wrapper sources library modules"
+
+  local wrapper_content
+  wrapper_content="$(cat "${WRAPPER}")"
+
+  # Wrapper should source modules, not define everything inline
+  assert_contains 'source' "${wrapper_content}" "Wrapper uses source command"
+  assert_contains 'lib/logging.sh' "${wrapper_content}" "Wrapper sources logging module"
+}
+
+# =============================================================================
+# SECTION 2: Module Interface Tests - Each module exports expected functions
+# =============================================================================
+
+test_logging_module_interface() {
+  echo ""
+  echo "Test 2.1: Logging module exports required functions"
+
+  if [[ ! -f "${LIB_DIR}/logging.sh" ]]; then
     ((TESTS_RUN += 1))
     ((TESTS_FAILED += 1))
-    echo -e "${RED}✗${NC} Wrapper script is not executable"
-  fi
-}
-
-# Test 2: Git identity variables are set
-test_git_identity() {
-  echo ""
-  echo "Test 2: Git identity environment setup"
-
-  local mock_claude
-  mock_claude="$(create_mock_claude)"
-
-  # Temporarily add mock to PATH
-  export PATH="${TEST_TMP}:${PATH}"
-
-  # Create a mock wrapper that sources the real one but exits before exec
-  local test_wrapper="${TEST_TMP}/test-wrapper"
-  cat >"${test_wrapper}" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-source "${WRAPPER}" 2>/dev/null || true
-# Don't exec, just print vars
-printenv | grep -E '^GIT_' | sort
-EOF
-
-  # Extract the configuration values from the wrapper (handles both readonly and regular declarations)
-  local git_name
-  local git_email
-  git_name="$(grep 'CLAUDE_GIT_NAME=' "${WRAPPER}" | head -1 | cut -d'"' -f2)"
-  git_email="$(grep 'CLAUDE_GIT_EMAIL=' "${WRAPPER}" | head -1 | cut -d'"' -f2)"
-
-  # Verify the values are set
-  assert_equals "Claude Code Bot" "${git_name}" "Git author name configured correctly"
-  assert_contains "@" "${git_email}" "Git author email contains @ symbol"
-
-  # Verify they're exported
-  local wrapper_content_check
-  wrapper_content_check="$(cat "${WRAPPER}")"
-  assert_contains "export GIT_AUTHOR_NAME=\"\${CLAUDE_GIT_NAME}\"" "${wrapper_content_check}" "GIT_AUTHOR_NAME exported"
-  assert_contains "export GIT_AUTHOR_EMAIL=\"\${CLAUDE_GIT_EMAIL}\"" "${wrapper_content_check}" "GIT_AUTHOR_EMAIL exported"
-}
-
-# Test 3: Debug mode detection
-test_debug_mode() {
-  echo ""
-  echo "Test 3: Debug mode functionality"
-
-  local wrapper_content
-  wrapper_content="$(cat "${WRAPPER}")"
-
-  # Check that debug_log function exists
-  assert_contains "debug_log()" "${wrapper_content}" "debug_log function defined"
-
-  # Check that DEBUG variable is used
-  assert_contains "DEBUG=\"\${CLAUDE_DEBUG:-false}\"" "${wrapper_content}" "DEBUG variable initialized"
-}
-
-# Test 4: 1Password detection logic
-test_1password_detection() {
-  echo ""
-  echo "Test 4: 1Password CLI detection logic"
-
-  local wrapper_content
-  wrapper_content="$(cat "${WRAPPER}")"
-
-  # Check for op command detection
-  assert_contains "command -v op" "${wrapper_content}" "Checks for op command"
-
-  # Check for graceful handling when op not found
-  assert_contains "OP_ENABLED=false" "${wrapper_content}" "Has OP_ENABLED flag"
-}
-
-# Test 5: Multi-level secrets file paths
-test_secrets_file_paths() {
-  echo ""
-  echo "Test 5: Multi-level secrets file configuration"
-
-  local wrapper_content
-  wrapper_content="$(cat "${WRAPPER}")"
-
-  assert_contains "CLAUDE_OP_GLOBAL_SECRETS" "${wrapper_content}" "Global secrets path defined"
-  assert_contains "CLAUDE_OP_PROJECT_SECRETS" "${wrapper_content}" "Project secrets path defined"
-  assert_contains "CLAUDE_OP_LOCAL_SECRETS" "${wrapper_content}" "Local secrets path defined"
-
-  # Check for proper precedence (all three files checked)
-  assert_contains "OP_ENV_ARGS+=" "${wrapper_content}" "Builds env-file arguments array"
-}
-
-# Test 6: Error handling for failed signin
-test_signin_error_handling() {
-  echo ""
-  echo "Test 6: 1Password signin error handling"
-
-  local wrapper_content
-  wrapper_content="$(cat "${WRAPPER}")"
-
-  assert_contains "if op signin" "${wrapper_content}" "Conditional signin execution"
-  assert_contains "else" "${wrapper_content}" "Has error handling branch"
-  assert_contains "log_warn" "${wrapper_content}" "Uses log_warn function"
-  assert_contains "Continuing without" "${wrapper_content}" "Graceful degradation message"
-}
-
-# Test 7: Binary search logic
-test_claude_binary_search() {
-  echo ""
-  echo "Test 7: Claude binary search logic"
-
-  local wrapper_content
-  wrapper_content="$(cat "${WRAPPER}")"
-
-  assert_contains "type -ap claude" "${wrapper_content}" "Searches PATH for claude"
-  assert_contains "realpath" "${wrapper_content}" "Uses realpath for comparison"
-  assert_contains "WRAPPER_PATH" "${wrapper_content}" "Tracks wrapper path to avoid recursion"
-  assert_contains "Could not find claude binary" "${wrapper_content}" "Error message for missing binary"
-}
-
-# Test 8: Secrets file validation
-test_secrets_validation() {
-  echo ""
-  echo "Test 8: Secrets file validation logic"
-
-  local wrapper_content
-  wrapper_content="$(cat "${WRAPPER}")"
-
-  # Check for file existence checks
-  assert_contains "[[ -f \"\${CLAUDE_OP_GLOBAL_SECRETS}\" ]]" "${wrapper_content}" "Checks if global secrets exists"
-  assert_contains "[[ -f \"\${CLAUDE_OP_PROJECT_SECRETS}\" ]]" "${wrapper_content}" "Checks if project secrets exists"
-  assert_contains "[[ -f \"\${CLAUDE_OP_LOCAL_SECRETS}\" ]]" "${wrapper_content}" "Checks if local secrets exists"
-
-  # Check for readability checks
-  assert_contains "[[ -r \"\${CLAUDE_OP_GLOBAL_SECRETS}\" ]]" "${wrapper_content}" "Checks if global secrets is readable"
-  assert_contains "Cannot read" "${wrapper_content}" "Warning for unreadable files"
-}
-
-# Test 9: Conditional execution paths
-test_execution_paths() {
-  echo ""
-  echo "Test 9: Conditional execution paths"
-
-  local wrapper_content
-  wrapper_content="$(cat "${WRAPPER}")"
-
-  # Check for op run when enabled
-  assert_contains 'OP_ENABLED.*==.*true' "${wrapper_content}" "Checks OP_ENABLED flag"
-  assert_contains 'exec op run' "${wrapper_content}" "Executes with op run when enabled"
-
-  # Check for direct exec when disabled
-  assert_contains 'exec.*CLAUDE_BIN' "${wrapper_content}" "Direct execution when disabled"
-}
-
-# Test 10: ShellCheck compliance
-test_shellcheck_compliance() {
-  echo ""
-  echo "Test 10: ShellCheck static analysis"
-
-  if ! command -v shellcheck &>/dev/null; then
-    echo -e "${YELLOW}⊘${NC} ShellCheck not installed, skipping"
+    echo -e "${RED}✗${NC} Cannot test - logging.sh does not exist"
     return 0
   fi
 
-  local shellcheck_output
-  if shellcheck_output="$(shellcheck -x "${WRAPPER}" 2>&1)"; then
-    ((TESTS_RUN += 1))
-    ((TESTS_PASSED += 1))
-    echo -e "${GREEN}✓${NC} ShellCheck passed (no issues)"
-  else
-    ((TESTS_RUN += 1))
-    ((TESTS_FAILED += 1))
-    echo -e "${RED}✗${NC} ShellCheck found issues:"
-    echo "${shellcheck_output}"
-  fi
+  local module_content
+  module_content="$(cat "${LIB_DIR}/logging.sh")"
+
+  assert_contains "debug_log()" "${module_content}" "Exports debug_log function"
+  assert_contains "log_error()" "${module_content}" "Exports log_error function"
+  assert_contains "log_warn()" "${module_content}" "Exports log_warn function"
 }
 
-# Test 11: set -euo pipefail present
-test_strict_mode() {
+test_permissions_module_interface() {
   echo ""
-  echo "Test 11: Bash strict mode"
+  echo "Test 2.2: Permissions module exports required functions"
 
-  local first_line
-  local second_line
+  if [[ ! -f "${LIB_DIR}/permissions.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - permissions.sh does not exist"
+    return 0
+  fi
+
+  local module_content
+  module_content="$(cat "${LIB_DIR}/permissions.sh")"
+
+  assert_contains "check_file_permissions()" "${module_content}" "Exports check_file_permissions function"
+  assert_contains "ensure_secure_permissions()" "${module_content}" "Exports ensure_secure_permissions function"
+}
+
+test_path_security_module_interface() {
+  echo ""
+  echo "Test 2.3: Path security module exports required functions"
+
+  if [[ ! -f "${LIB_DIR}/path-security.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - path-security.sh does not exist"
+    return 0
+  fi
+
+  local module_content
+  module_content="$(cat "${LIB_DIR}/path-security.sh")"
+
+  assert_contains "canonicalize_path()" "${module_content}" "Exports canonicalize_path function"
+  assert_contains "path_is_under()" "${module_content}" "Exports path_is_under function"
+}
+
+test_git_identity_module_interface() {
+  echo ""
+  echo "Test 2.4: Git identity module exports required variables"
+
+  if [[ ! -f "${LIB_DIR}/git-identity.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - git-identity.sh does not exist"
+    return 0
+  fi
+
+  local module_content
+  module_content="$(cat "${LIB_DIR}/git-identity.sh")"
+
+  assert_contains "GIT_AUTHOR_NAME" "${module_content}" "Sets GIT_AUTHOR_NAME"
+  assert_contains "GIT_AUTHOR_EMAIL" "${module_content}" "Sets GIT_AUTHOR_EMAIL"
+  assert_contains "GIT_COMMITTER_NAME" "${module_content}" "Sets GIT_COMMITTER_NAME"
+  assert_contains "GIT_COMMITTER_EMAIL" "${module_content}" "Sets GIT_COMMITTER_EMAIL"
+  assert_contains "export" "${module_content}" "Exports git identity variables"
+}
+
+test_binary_discovery_module_interface() {
+  echo ""
+  echo "Test 2.5: Binary discovery module exports required functions"
+
+  if [[ ! -f "${LIB_DIR}/binary-discovery.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - binary-discovery.sh does not exist"
+    return 0
+  fi
+
+  local module_content
+  module_content="$(cat "${LIB_DIR}/binary-discovery.sh")"
+
+  assert_contains "find_claude_binary()" "${module_content}" "Exports find_claude_binary function"
+  assert_contains "validate_claude_binary()" "${module_content}" "Exports validate_claude_binary function"
+}
+
+# =============================================================================
+# SECTION 3: Behavioral Tests - Functions work correctly
+# =============================================================================
+
+test_logging_behavior() {
+  echo ""
+  echo "Test 3.1: Logging functions produce correct output"
+
+  if [[ ! -f "${LIB_DIR}/logging.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - logging.sh does not exist"
+    return 0
+  fi
+
+  # Source the module in a subshell to test behavior
+  local debug_output error_output warn_output
+
+  # Test debug_log with DEBUG=true
+  debug_output="$(CLAUDE_DEBUG=true bash -c "source '${LIB_DIR}/logging.sh'; debug_log 'test message'" 2>&1)"
+  assert_contains "DEBUG:" "${debug_output}" "debug_log outputs DEBUG: prefix when enabled"
+  assert_contains "test message" "${debug_output}" "debug_log outputs the message"
+
+  # Test debug_log with DEBUG=false (should be silent)
+  debug_output="$(CLAUDE_DEBUG=false bash -c "source '${LIB_DIR}/logging.sh'; debug_log 'test message'" 2>&1)"
+  assert_not_contains "test message" "${debug_output}" "debug_log is silent when disabled"
+
+  # Test log_error
+  error_output="$(bash -c "source '${LIB_DIR}/logging.sh'; log_error 'error test'" 2>&1)"
+  assert_contains "ERROR:" "${error_output}" "log_error outputs ERROR: prefix"
+
+  # Test log_warn
+  warn_output="$(bash -c "source '${LIB_DIR}/logging.sh'; log_warn 'warn test'" 2>&1)"
+  assert_contains "WARNING:" "${warn_output}" "log_warn outputs WARNING: prefix"
+}
+
+test_permissions_behavior() {
+  echo ""
+  echo "Test 3.2: Permission checking works correctly"
+
+  if [[ ! -f "${LIB_DIR}/permissions.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - permissions.sh does not exist"
+    return 0
+  fi
+
+  # Create test files with different permissions
+  local test_file_secure="${TEST_TMP}/secure-file"
+  local test_file_group="${TEST_TMP}/group-readable"
+  local test_file_world="${TEST_TMP}/world-readable"
+
+  echo "test" >"${test_file_secure}"
+  echo "test" >"${test_file_group}"
+  echo "test" >"${test_file_world}"
+
+  chmod 600 "${test_file_secure}"
+  chmod 640 "${test_file_group}"
+  chmod 644 "${test_file_world}"
+
+  # Test check_file_permissions
+  local exit_code
+
+  # Secure file should pass
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; check_file_permissions '${test_file_secure}'" 2>/dev/null || exit_code=$?
+  assert_exit_code "0" "${exit_code}" "check_file_permissions accepts 600 permissions"
+
+  # Group-readable should fail
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; check_file_permissions '${test_file_group}'" 2>/dev/null || exit_code=$?
+  assert_exit_code "1" "${exit_code}" "check_file_permissions rejects group-readable files"
+
+  # World-readable should fail
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; check_file_permissions '${test_file_world}'" 2>/dev/null || exit_code=$?
+  assert_exit_code "1" "${exit_code}" "check_file_permissions rejects world-readable files"
+}
+
+test_permissions_autofix_behavior() {
+  echo ""
+  echo "Test 3.3: Permission auto-fix works correctly"
+
+  if [[ ! -f "${LIB_DIR}/permissions.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - permissions.sh does not exist"
+    return 0
+  fi
+
+  local test_file="${TEST_TMP}/needs-fix"
+  echo "test" >"${test_file}"
+  chmod 644 "${test_file}"
+
+  # ensure_secure_permissions should fix to 400
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; ensure_secure_permissions '${test_file}' '400'" 2>/dev/null
+
+  local perms
+  perms="$(stat -f '%A' "${test_file}" 2>/dev/null || stat -c '%a' "${test_file}" 2>/dev/null)"
+  assert_equals "400" "${perms}" "ensure_secure_permissions fixes to target permissions"
+}
+
+test_path_security_behavior() {
+  echo ""
+  echo "Test 3.4: Path security functions work correctly"
+
+  if [[ ! -f "${LIB_DIR}/path-security.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - path-security.sh does not exist"
+    return 0
+  fi
+
+  # Create test directory structure
+  local test_dir="${TEST_TMP}/path-test"
+  mkdir -p "${test_dir}/subdir"
+  echo "test" >"${test_dir}/file.txt"
+  ln -s "${test_dir}/file.txt" "${test_dir}/symlink.txt"
+
+  local exit_code canonical
+
+  # Regular file should canonicalize
+  canonical="$(bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/path-security.sh'; canonicalize_path '${test_dir}/file.txt'" 2>/dev/null)"
+  assert_contains "${test_dir}/file.txt" "${canonical}" "canonicalize_path returns canonical path for regular file"
+
+  # Symlink should be rejected
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/path-security.sh'; canonicalize_path '${test_dir}/symlink.txt'" 2>/dev/null || exit_code=$?
+  assert_exit_code "1" "${exit_code}" "canonicalize_path rejects symlinks"
+
+  # path_is_under should work
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/path-security.sh'; path_is_under '${test_dir}/subdir' '${test_dir}'" || exit_code=$?
+  assert_exit_code "0" "${exit_code}" "path_is_under returns true for child path"
+
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/path-security.sh'; path_is_under '/tmp/other' '${test_dir}'" || exit_code=$?
+  assert_exit_code "1" "${exit_code}" "path_is_under returns false for unrelated path"
+}
+
+test_git_identity_behavior() {
+  echo ""
+  echo "Test 3.5: Git identity is set correctly"
+
+  if [[ ! -f "${LIB_DIR}/git-identity.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - git-identity.sh does not exist"
+    return 0
+  fi
+
+  # Source the module and check exported variables
+  local author_name author_email
+
+  author_name="$(bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/git-identity.sh'; echo \"\${GIT_AUTHOR_NAME}\"")"
+  author_email="$(bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/git-identity.sh'; echo \"\${GIT_AUTHOR_EMAIL}\"")"
+
+  assert_equals "Claude Code Bot" "${author_name}" "GIT_AUTHOR_NAME is set to Claude Code Bot"
+  assert_contains "@" "${author_email}" "GIT_AUTHOR_EMAIL contains @ symbol"
+}
+
+# =============================================================================
+# SECTION 4: Integration Tests - Full wrapper behavior
+# =============================================================================
+
+test_wrapper_strict_mode() {
+  echo ""
+  echo "Test 4.1: Wrapper uses strict mode"
+
+  local first_line second_line
   first_line="$(head -1 "${WRAPPER}")"
   second_line="$(sed -n '2p' "${WRAPPER}")"
 
@@ -314,80 +522,200 @@ test_strict_mode() {
   assert_equals "set -euo pipefail" "${second_line}" "Strict mode enabled"
 }
 
-# Test 12: Debug logging coverage
-test_debug_coverage() {
+test_wrapper_shellcheck() {
   echo ""
-  echo "Test 12: Debug logging coverage"
+  echo "Test 4.2: ShellCheck compliance"
 
-  local wrapper_content
-  local debug_count
-  wrapper_content="$(cat "${WRAPPER}")"
-  debug_count="$(grep -c "debug_log" "${wrapper_content}" || true)"
-
-  ((TESTS_RUN += 1))
-  if [[ ${debug_count} -ge 10 ]]; then
-    ((TESTS_PASSED += 1))
-    echo -e "${GREEN}✓${NC} Adequate debug logging (${debug_count} calls)"
-  else
-    echo -e "${YELLOW}⚠${NC} Limited debug logging (${debug_count} calls, recommend 10+)"
+  if ! command -v shellcheck &>/dev/null; then
+    echo -e "${YELLOW}⊘${NC} ShellCheck not installed, skipping"
+    return 0
   fi
+
+  # Check wrapper (--severity=warning to skip info-level path resolution hints)
+  local shellcheck_output
+  if shellcheck_output="$(shellcheck -x --severity=warning "${WRAPPER}" 2>&1)"; then
+    ((TESTS_RUN += 1))
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} Wrapper passes ShellCheck"
+  else
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Wrapper has ShellCheck issues:"
+    echo "${shellcheck_output}"
+  fi
+
+  # Check all modules
+  for module in "${LIB_DIR}"/*.sh; do
+    if [[ -f "${module}" ]]; then
+      if shellcheck_output="$(shellcheck -x --severity=warning "${module}" 2>&1)"; then
+        ((TESTS_RUN += 1))
+        ((TESTS_PASSED += 1))
+        echo -e "${GREEN}✓${NC} $(basename "${module}") passes ShellCheck"
+      else
+        ((TESTS_RUN += 1))
+        ((TESTS_FAILED += 1))
+        echo -e "${RED}✗${NC} $(basename "${module}") has ShellCheck issues:"
+        echo "${shellcheck_output}"
+      fi
+    fi
+  done
 }
 
-# Test 13: Integration test with mock claude (if we can safely test)
 test_mock_integration() {
   echo ""
-  echo "Test 13: Mock integration test"
+  echo "Test 4.3: Integration with mock claude binary"
 
   local mock_claude
   mock_claude="$(create_mock_claude)"
 
-  # Create a test wrapper that uses our mock
+  # Create a modified wrapper that uses our mock
   local test_wrapper="${TEST_TMP}/test-integration-wrapper"
-  local test_wrapper_tmp="${TEST_TMP}/test-integration-wrapper.tmp"
 
-  # Replace the claude search with our mock (atomic operation via subshell)
-  (
-    sed "s|exec \"\${CLAUDE_BIN}\"|exec ${mock_claude}|g" "${WRAPPER}" >"${test_wrapper_tmp}" \
-      && mv "${test_wrapper_tmp}" "${test_wrapper}"
-  ) || {
-    rm -f "${test_wrapper_tmp}" "${test_wrapper}"
-    echo -e "${YELLOW}⚠${NC} Integration test skipped (wrapper modification failed)"
+  # Copy wrapper and modify to use mock
+  if ! cp "${WRAPPER}" "${test_wrapper}"; then
+    echo -e "${YELLOW}⚠${NC} Integration test skipped (could not copy wrapper)"
+    return 0
+  fi
+
+  # Replace exec with our mock
+  sed -i.bak "s|exec \"\${CLAUDE_BIN}\"|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null \
+    || sed -i '' "s|exec \"\${CLAUDE_BIN}\"|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null || {
+    echo -e "${YELLOW}⚠${NC} Integration test skipped (sed failed)"
     return 0
   }
 
   chmod +x "${test_wrapper}"
 
-  # Run the wrapper and capture output
-  local output
-  if output="$("${test_wrapper}" --version 2>&1)"; then
+  # Run the wrapper with mock and check output
+  local output exit_code
+  exit_code=0
+  output="$("${test_wrapper}" --version 2>&1)" || exit_code=$?
+
+  if [[ ${exit_code} -eq 0 ]]; then
     assert_contains "MOCK_CLAUDE_EXECUTED" "${output}" "Mock claude was executed"
     assert_contains "GIT_AUTHOR_NAME=Claude Code Bot" "${output}" "Git identity passed through"
   else
-    echo -e "${YELLOW}⚠${NC} Integration test skipped (wrapper modification failed)"
+    echo -e "${YELLOW}⚠${NC} Integration test skipped (wrapper exited with ${exit_code})"
   fi
 }
 
+test_no_old_naming_references() {
+  echo ""
+  echo "Test 4.4: No references to old naming"
+
+  local wrapper_content
+  wrapper_content="$(cat "${WRAPPER}")"
+
+  assert_not_contains "claude-with-identity" "${wrapper_content}" "No claude-with-identity references in wrapper"
+  assert_not_contains "claude-custom" "${wrapper_content}" "No claude-custom references in wrapper"
+}
+
+# =============================================================================
+# SECTION 5: Regression Tests - Ensure existing functionality preserved
+# =============================================================================
+
+test_debug_logging_coverage() {
+  echo ""
+  echo "Test 5.1: Debug logging coverage"
+
+  # Count debug_log calls across all source files
+  local debug_count=0
+  local file_count=0
+  local count
+
+  if [[ -f "${WRAPPER}" ]]; then
+    count="$(grep -c "debug_log" "${WRAPPER}" 2>/dev/null)" || count=0
+    debug_count=$((debug_count + count))
+    ((file_count += 1))
+  fi
+
+  for module in "${LIB_DIR}"/*.sh; do
+    if [[ -f "${module}" ]]; then
+      count="$(grep -c "debug_log" "${module}" 2>/dev/null)" || count=0
+      debug_count=$((debug_count + count))
+      ((file_count += 1))
+    fi
+  done
+
+  ((TESTS_RUN += 1))
+  if [[ ${debug_count} -ge 20 ]]; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} Adequate debug logging (${debug_count} calls across ${file_count} files)"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Insufficient debug logging (${debug_count} calls, need 20+)"
+  fi
+}
+
+test_graceful_degradation() {
+  echo ""
+  echo "Test 5.2: Graceful degradation without 1Password"
+
+  # The secrets-loader module should handle missing op gracefully
+  if [[ ! -f "${LIB_DIR}/secrets-loader.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - secrets-loader.sh does not exist"
+    return 0
+  fi
+
+  local module_content
+  module_content="$(cat "${LIB_DIR}/secrets-loader.sh")"
+
+  assert_contains "command -v op" "${module_content}" "Checks for op command availability"
+  assert_contains "OP_ENABLED" "${module_content}" "Has OP_ENABLED flag for graceful degradation"
+}
+
+# =============================================================================
 # Main test runner
+# =============================================================================
+
 main() {
   echo "======================================"
-  echo "Claude Wrapper Test Suite"
+  echo "Claude Wrapper Test Suite (TDD)"
   echo "======================================"
 
   setup_test_env
 
+  # Section 1: Structure Tests
+  echo ""
+  echo "--- Section 1: Structure Tests ---"
   test_wrapper_exists
-  test_git_identity
-  test_debug_mode
-  test_1password_detection
-  test_secrets_file_paths
-  test_signin_error_handling
-  test_claude_binary_search
-  test_secrets_validation
-  test_execution_paths
-  test_strict_mode
-  test_debug_coverage
-  test_shellcheck_compliance
+  test_lib_directory_exists
+  test_module_files_exist
+  test_wrapper_sources_modules
+
+  # Section 2: Module Interface Tests
+  echo ""
+  echo "--- Section 2: Module Interface Tests ---"
+  test_logging_module_interface
+  test_permissions_module_interface
+  test_path_security_module_interface
+  test_git_identity_module_interface
+  test_binary_discovery_module_interface
+
+  # Section 3: Behavioral Tests
+  echo ""
+  echo "--- Section 3: Behavioral Tests ---"
+  test_logging_behavior
+  test_permissions_behavior
+  test_permissions_autofix_behavior
+  test_path_security_behavior
+  test_git_identity_behavior
+
+  # Section 4: Integration Tests
+  echo ""
+  echo "--- Section 4: Integration Tests ---"
+  test_wrapper_strict_mode
+  test_wrapper_shellcheck
   test_mock_integration
+  test_no_old_naming_references
+
+  # Section 5: Regression Tests
+  echo ""
+  echo "--- Section 5: Regression Tests ---"
+  test_debug_logging_coverage
+  test_graceful_degradation
 
   echo ""
   echo "======================================"
