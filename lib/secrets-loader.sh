@@ -230,26 +230,34 @@ init_secrets_loader() {
     local git_root_raw
     git_root_raw="$(git rev-parse --show-toplevel 2>/dev/null)"
     if [[ -n "${git_root_raw}" ]]; then
-      # Canonicalize git root to handle symlinks
-      GIT_ROOT="$(realpath "${git_root_raw}" 2>/dev/null || echo "${git_root_raw}")"
+      # Canonicalize git root to handle symlinks - required for path_is_under
+      GIT_ROOT="$(realpath "${git_root_raw}" 2>/dev/null)" || {
+        debug_log "Failed to canonicalize git root: ${git_root_raw}"
+        GIT_ROOT=""
+      }
 
-      local project_secrets="${GIT_ROOT}/${CLAUDE_OP_PROJECT_SECRETS}"
-      if validated_path="$(validate_secrets_file "${project_secrets}")"; then
-        if path_is_under "${validated_path}" "${GIT_ROOT}"; then
-          OP_ENV_ARGS+=(--env-file="${validated_path}")
-          debug_log "Added project secrets (validated)"
-        else
-          log_error "Project secrets path escapes git repository, refusing to load"
+      # Skip project/local secrets if we couldn't canonicalize the git root
+      if [[ -z "${GIT_ROOT}" ]]; then
+        debug_log "Skipping project/local secrets - git root not canonical"
+      else
+        local project_secrets="${GIT_ROOT}/${CLAUDE_OP_PROJECT_SECRETS}"
+        if validated_path="$(validate_secrets_file "${project_secrets}")"; then
+          if path_is_under "${validated_path}" "${GIT_ROOT}"; then
+            OP_ENV_ARGS+=(--env-file="${validated_path}")
+            debug_log "Added project secrets (validated)"
+          else
+            log_error "Project secrets path escapes git repository, refusing to load"
+          fi
         fi
-      fi
 
-      local local_secrets="${GIT_ROOT}/${CLAUDE_OP_LOCAL_SECRETS}"
-      if validated_path="$(validate_secrets_file "${local_secrets}")"; then
-        if path_is_under "${validated_path}" "${GIT_ROOT}"; then
-          OP_ENV_ARGS+=(--env-file="${validated_path}")
-          debug_log "Added local secrets (validated)"
-        else
-          log_error "Local secrets path escapes git repository, refusing to load"
+        local local_secrets="${GIT_ROOT}/${CLAUDE_OP_LOCAL_SECRETS}"
+        if validated_path="$(validate_secrets_file "${local_secrets}")"; then
+          if path_is_under "${validated_path}" "${GIT_ROOT}"; then
+            OP_ENV_ARGS+=(--env-file="${validated_path}")
+            debug_log "Added local secrets (validated)"
+          else
+            log_error "Local secrets path escapes git repository, refusing to load"
+          fi
         fi
       fi
     fi
