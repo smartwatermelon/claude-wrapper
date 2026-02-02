@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive test suite for the `claude-with-identity` wrapper script. Tests cover functionality, error handling, security, and integration.
+Comprehensive test suite for the `claude-wrapper` wrapper script. Tests cover functionality, error handling, security, and integration.
 
 ## Quick Start
 
@@ -125,7 +125,7 @@ After automated tests pass, manually verify:
 op signout --all
 
 # Run wrapper (should prompt for TouchID)
-CLAUDE_DEBUG=true ./bin/claude-with-identity --version
+CLAUDE_DEBUG=true ./bin/claude-wrapper --version
 
 # Expected:
 # - TouchID prompt appears
@@ -137,7 +137,7 @@ CLAUDE_DEBUG=true ./bin/claude-with-identity --version
 
 ```bash
 # Run again immediately
-CLAUDE_DEBUG=true ./bin/claude-with-identity --version
+CLAUDE_DEBUG=true ./bin/claude-wrapper --version
 
 # Expected:
 # - NO TouchID prompt
@@ -153,7 +153,7 @@ mkdir -p ~/.config/claude-code
 echo 'TEST_SECRET=op://Personal/test/field' > ~/.config/claude-code/secrets.op
 
 # Run with secret verification
-./bin/claude-with-identity -c "printenv | grep TEST_SECRET"
+./bin/claude-wrapper -c "printenv | grep TEST_SECRET"
 
 # Expected:
 # - Variable exists in environment
@@ -170,7 +170,7 @@ echo 'LEVEL=project' > .claude/secrets.op
 echo 'LEVEL=local' > .claude/secrets.local.op
 
 # Test precedence
-CLAUDE_DEBUG=true ./bin/claude-with-identity -c "echo \$LEVEL"
+CLAUDE_DEBUG=true ./bin/claude-wrapper -c "echo \$LEVEL"
 
 # Expected:
 # - DEBUG shows all three files loaded
@@ -184,7 +184,7 @@ CLAUDE_DEBUG=true ./bin/claude-with-identity -c "echo \$LEVEL"
 echo 'BAD_SECRET=op://NonExistent/item/field' > ~/.config/claude-code/secrets.op
 
 # Run wrapper
-./bin/claude-with-identity --version
+./bin/claude-wrapper --version
 
 # Expected:
 # - op run fails with descriptive error
@@ -199,7 +199,7 @@ echo 'BAD_SECRET=op://NonExistent/item/field' > ~/.config/claude-code/secrets.op
 sudo mv /opt/homebrew/bin/op /opt/homebrew/bin/op.disabled
 
 # Run wrapper
-./bin/claude-with-identity --version
+./bin/claude-wrapper --version
 
 # Expected:
 # - Works normally without secrets
@@ -228,7 +228,7 @@ EOF
 chmod +x .git/hooks/pre-commit
 
 # Make a commit through wrapper
-./bin/claude-with-identity -c "git commit --allow-empty -m 'test'"
+./bin/claude-wrapper -c "git commit --allow-empty -m 'test'"
 
 # Expected:
 # - Hook executes
@@ -298,7 +298,7 @@ bash --version  # Should be 5.0+
 brew install shellcheck
 
 # Run manually to see issues
-shellcheck bin/claude-with-identity
+shellcheck bin/claude-wrapper
 ```
 
 ### Integration tests skip

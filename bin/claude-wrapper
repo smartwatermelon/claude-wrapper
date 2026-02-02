@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Claude Code wrapper - orchestrates modular components
+# Provides git identity, secrets management, and binary discovery
+
+# Determine library path relative to this script
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WRAPPER_LIB="${WRAPPER_DIR}/../lib"
+WRAPPER_PATH="$(realpath "${BASH_SOURCE[0]}")"
+
+# Source all modules in dependency order
+# shellcheck source=../lib/logging.sh
+source "${WRAPPER_LIB}/logging.sh"
+
+# shellcheck source=../lib/permissions.sh
+source "${WRAPPER_LIB}/permissions.sh"
+
+# shellcheck source=../lib/path-security.sh
+source "${WRAPPER_LIB}/path-security.sh"
+
+# shellcheck source=../lib/git-identity.sh
+source "${WRAPPER_LIB}/git-identity.sh"
+
+# shellcheck source=../lib/github-token.sh
+source "${WRAPPER_LIB}/github-token.sh"
+
+# shellcheck source=../lib/secrets-loader.sh
+source "${WRAPPER_LIB}/secrets-loader.sh"
+
+# shellcheck source=../lib/binary-discovery.sh
+source "${WRAPPER_LIB}/binary-discovery.sh"
+
+# shellcheck source=../lib/pre-launch.sh
+source "${WRAPPER_LIB}/pre-launch.sh"
+
+# Find and validate the real claude binary
+CLAUDE_BIN=""
+if ! CLAUDE_BIN="$(find_claude_binary "${WRAPPER_PATH}")"; then
+  log_error "Could not find claude binary"
+  exit 1
+fi
+
+if ! validate_claude_binary "${CLAUDE_BIN}"; then
+  log_error "Claude binary failed security validation, refusing to execute"
+  exit 1
+fi
+
+# Initialize secrets loader (discovers files, authenticates if needed)
+init_secrets_loader
+
+# Launch claude with or without secrets injection
+if secrets_available; then
+  # Inject secrets into environment
+  if ! inject_secrets; then
+    log_error "Failed to inject secrets"
+    exit 1
+  fi
+
+  # Run pre-launch hook if available
+  GIT_ROOT="$(get_git_root)"
+  if [[ -n "${GIT_ROOT}" ]]; then
+    if ! run_pre_launch_hook "${GIT_ROOT}"; then
+      exit 1
+    fi
+  fi
+
+  debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
+  exec "${CLAUDE_BIN}" "$@"
+else
+  debug_log "Executing: ${CLAUDE_BIN} [${#} args]"
+  exec "${CLAUDE_BIN}" "$@"
+fi
