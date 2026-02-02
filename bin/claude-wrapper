@@ -4,10 +4,10 @@ set -euo pipefail
 # Claude Code wrapper - orchestrates modular components
 # Provides git identity, secrets management, and binary discovery
 
-# Determine library path relative to this script
-WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WRAPPER_LIB="${WRAPPER_DIR}/../lib"
+# Determine library path relative to this script (resolve symlinks first)
 WRAPPER_PATH="$(realpath "${BASH_SOURCE[0]}")"
+WRAPPER_DIR="$(dirname "${WRAPPER_PATH}")"
+WRAPPER_LIB="${WRAPPER_DIR}/../lib"
 
 # Source all modules in dependency order
 # shellcheck source=../lib/logging.sh
