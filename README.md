@@ -1,4 +1,4 @@
-# Claude Code Custom CLI (CCCLI)
+# Claude Wrapper
 
 Custom wrapper for Claude Code CLI with identity management and 1Password secrets integration.
 
@@ -11,28 +11,33 @@ Custom wrapper for Claude Code CLI with identity management and 1Password secret
 - **Multi-Level Secrets**: Global, project, and local secrets support
 - **Debug Mode**: Comprehensive logging for troubleshooting
 - **Graceful Degradation**: Works with or without 1Password
+- **Modular Architecture**: Clean separation of concerns for maintainability
 
 ## Quick Start
 
 ### Installation
 
 1. Clone this repository:
+
    ```bash
-   git clone https://github.com/yourusername/claude-custom.git ~/.claude-custom
+   git clone https://github.com/smartwatermelon/claude-wrapper.git ~/.claude-wrapper
    ```
 
 2. Symlink the wrapper to your local bin:
+
    ```bash
    mkdir -p ~/.local/bin
-   ln -sf ~/.claude-custom/bin/claude-with-identity ~/.local/bin/claude
+   ln -sf ~/.claude-wrapper/bin/claude-wrapper ~/.local/bin/claude
    ```
 
 3. Ensure `~/.local/bin` is in your PATH:
+
    ```bash
    echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
    ```
 
 4. Verify installation:
+
    ```bash
    which claude  # Should show ~/.local/bin/claude
    claude --version
@@ -43,6 +48,7 @@ Custom wrapper for Claude Code CLI with identity management and 1Password secret
 #### Git Identity (Required)
 
 The wrapper automatically sets up a dedicated git identity for Claude Code:
+
 - Name: `Claude Code Bot`
 - Email: `claude-code@smartwatermelon.github`
 
@@ -109,6 +115,7 @@ claude --version
 ```
 
 The wrapper:
+
 1. Sets git identity
 2. Authenticates with 1Password (once per session)
 3. Loads secrets from multi-level files
@@ -122,6 +129,11 @@ The wrapper:
   - Multi-level secrets
   - Team workflows
   - Troubleshooting
+
+- **[SECURITY.md](docs/SECURITY.md)**: Security hardening documentation
+  - Permission validation
+  - Path security
+  - Binary validation
 
 - **[tests/README.md](tests/README.md)**: Test suite documentation
   - Running tests
@@ -143,11 +155,21 @@ VERBOSE=true ./tests/test-wrapper.sh
 ### Project Structure
 
 ```
-claude-custom/
+claude-wrapper/
 ├── bin/
-│   └── claude-with-identity    # Main wrapper script
+│   └── claude-wrapper          # Main entry point (orchestrates modules)
+├── lib/
+│   ├── logging.sh              # Debug/error/warning logging
+│   ├── permissions.sh          # File permission validation
+│   ├── path-security.sh        # Path canonicalization and traversal protection
+│   ├── git-identity.sh         # Git author/committer identity
+│   ├── github-token.sh         # GitHub CLI token loading
+│   ├── secrets-loader.sh       # 1Password integration
+│   ├── binary-discovery.sh     # Claude binary search/validation
+│   └── pre-launch.sh           # Project-specific pre-launch hooks
 ├── docs/
-│   └── SECRETS.md              # 1Password documentation
+│   ├── SECRETS.md              # 1Password documentation
+│   └── SECURITY.md             # Security hardening documentation
 ├── tests/
 │   ├── test-wrapper.sh         # Test suite
 │   └── README.md               # Test documentation
@@ -166,14 +188,14 @@ This is security-critical infrastructure code. All changes require:
 4. **Security review**: Adversarial review for security changes
 
 ```bash
-# Run ShellCheck
-shellcheck bin/claude-with-identity
+# Run ShellCheck on all modules
+shellcheck bin/claude-wrapper lib/*.sh
 
 # Run tests
 ./tests/test-wrapper.sh
 
 # Run code review (requires Claude Code)
-claude --agent code-reviewer bin/claude-with-identity
+claude --agent code-reviewer bin/claude-wrapper lib/
 ```
 
 ## Security
@@ -204,6 +226,7 @@ claude --agent code-reviewer bin/claude-with-identity
 ## Troubleshooting
 
 ### Wrapper not found
+
 ```bash
 # Check symlink
 ls -la ~/.local/bin/claude
@@ -212,10 +235,11 @@ ls -la ~/.local/bin/claude
 echo $PATH | grep -o "\.local/bin"
 
 # Recreate symlink
-ln -sf ~/.claude-custom/bin/claude-with-identity ~/.local/bin/claude
+ln -sf ~/.claude-wrapper/bin/claude-wrapper ~/.local/bin/claude
 ```
 
 ### Git identity not applied
+
 ```bash
 # Check git log shows bot identity
 git log -1 --format='%an <%ae>'
@@ -227,6 +251,7 @@ CLAUDE_DEBUG=true claude -c "git log -1"
 ```
 
 ### 1Password prompting too often
+
 ```bash
 # Verify app integration
 op account get
@@ -237,6 +262,7 @@ op account get
 ```
 
 ### Secrets not available
+
 ```bash
 # Enable debug mode
 CLAUDE_DEBUG=true claude -c "printenv | grep API_KEY"
@@ -256,7 +282,7 @@ See [SECRETS.md](docs/SECRETS.md) for comprehensive troubleshooting.
 2. Create a feature branch
 3. Make your changes
 4. Run tests: `./tests/test-wrapper.sh`
-5. Run ShellCheck: `shellcheck bin/claude-with-identity`
+5. Run ShellCheck: `shellcheck bin/claude-wrapper lib/*.sh`
 6. Submit a pull request
 
 ## License
@@ -271,7 +297,16 @@ MIT License - see LICENSE file for details
 
 ## Changelog
 
+### v3.0.0 (2026-02-01)
+
+- Renamed from `claude-custom` to `claude-wrapper`
+- Modularized architecture: split into 8 focused modules in `lib/`
+- Each module is independently testable
+- Improved test suite with TDD approach
+- Full ShellCheck compliance across all modules
+
 ### v2.0.0 (2026-01-14)
+
 - Added 1Password secrets integration
 - Multi-level secrets support (global, project, local)
 - Enhanced error handling
@@ -280,6 +315,7 @@ MIT License - see LICENSE file for details
 - Full documentation
 
 ### v1.0.0 (Initial)
+
 - Git identity management
 - SSH key isolation
 - GitHub token support
