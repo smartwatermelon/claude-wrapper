@@ -94,6 +94,13 @@ select_gh_token() {
 
   local owner
   if owner="$(detect_repo_owner "$@")" && [[ -n "${owner}" ]]; then
+    # Validate owner against GitHub username charset to prevent path traversal.
+    # GitHub usernames must start with alphanumeric (rejects "..", ".", "-evil").
+    if [[ ! "${owner}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+      printf '[gh-token-router] Error: Invalid owner name: %s\n' "${owner}" >&2
+      return 1
+    fi
+
     local owner_token_file="${token_dir}/gh-token.${owner}"
 
     if [[ -f "${owner_token_file}" ]]; then
