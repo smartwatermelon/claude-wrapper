@@ -835,9 +835,32 @@ test_select_gh_token_rejects_insecure_perms() {
   assert_exit_code "1" "${exit_code}" "Rejects token file with insecure permissions"
 }
 
+test_select_gh_token_rejects_path_traversal() {
+  echo ""
+  echo "Test 6.8: select_gh_token rejects path traversal in owner"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  local token_dir="${TEST_TMP}/token-traversal"
+  mkdir -p "${token_dir}"
+
+  local exit_code=0
+  CLAUDE_GH_TOKEN_DIR="${token_dir}" GH_TOKEN="default" bash -c "
+    source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null
+    select_gh_token api repos/../../tmp/evil/pulls
+  " 2>/dev/null || exit_code=$?
+
+  assert_exit_code "1" "${exit_code}" "Rejects path traversal in owner name"
+}
+
 test_github_token_exports_router_vars() {
   echo ""
-  echo "Test 6.8: github-token.sh exports router env vars"
+  echo "Test 6.9: github-token.sh exports router env vars"
 
   local module_content
   module_content="$(cat "${LIB_DIR}/github-token.sh")"
@@ -909,6 +932,7 @@ main() {
   test_select_gh_token_owner_specific
   test_select_gh_token_fallback
   test_select_gh_token_rejects_insecure_perms
+  test_select_gh_token_rejects_path_traversal
   test_github_token_exports_router_vars
 
   echo ""
