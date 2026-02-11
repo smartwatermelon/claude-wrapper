@@ -328,9 +328,80 @@ else
 fi
 
 # =============================================================================
-# SECTION 5: Token Scope Verification
+# SECTION 5: Cross-Org Token Routing
 # =============================================================================
-section "5. Token Scope Summary"
+section "5. Cross-Org Token Routing"
+
+echo -e "${BOLD}Multi-org token routing:${NC}"
+
+# 5.1 Check if router env vars are set
+if [[ -n "${CLAUDE_GH_TOKEN_DIR:-}" ]]; then
+  pass "CLAUDE_GH_TOKEN_DIR is set: ${CLAUDE_GH_TOKEN_DIR}"
+else
+  skip "CLAUDE_GH_TOKEN_DIR not set (multi-org routing not active)"
+fi
+
+if [[ -n "${CLAUDE_GH_TOKEN_ROUTER:-}" ]]; then
+  pass "CLAUDE_GH_TOKEN_ROUTER is set: ${CLAUDE_GH_TOKEN_ROUTER}"
+else
+  skip "CLAUDE_GH_TOKEN_ROUTER not set (multi-org routing not active)"
+fi
+
+# 5.2 Test personal repo access
+echo ""
+echo -e "${BOLD}Personal repo access:${NC}"
+if gh api repos/smartwatermelon/claude-wrapper --jq '.full_name' &>/dev/null; then
+  pass "Can access personal repo (smartwatermelon/claude-wrapper)"
+else
+  fail "Cannot access personal repo (smartwatermelon/claude-wrapper)"
+fi
+
+# 5.3 Test org repo access (requires gh-token.nightowlstudiollc to exist)
+echo ""
+echo -e "${BOLD}Organization repo access:${NC}"
+ORG_TOKEN_FILE="${CLAUDE_GH_TOKEN_DIR:-${HOME}/.config/claude-code}/gh-token.nightowlstudiollc"
+if [[ -f "${ORG_TOKEN_FILE}" ]]; then
+  org_result="$(gh api repos/nightowlstudiollc/kebab-tax --jq '.full_name' 2>&1)" || org_result=""
+  if [[ "${org_result}" == "nightowlstudiollc/kebab-tax" ]]; then
+    pass "Can access org repo (nightowlstudiollc/kebab-tax)"
+  else
+    fail "Cannot access org repo (nightowlstudiollc/kebab-tax)" "Got: ${org_result:0:100}"
+  fi
+else
+  skip "Org token file not found: ${ORG_TOKEN_FILE} (create PAT for nightowlstudiollc first)"
+fi
+
+# 5.4 Test that both work in the same flow
+echo ""
+echo -e "${BOLD}Same-session multi-org:${NC}"
+if [[ -f "${ORG_TOKEN_FILE}" ]]; then
+  personal_ok=false
+  org_ok=false
+
+  if gh api repos/smartwatermelon/claude-wrapper --jq '.full_name' &>/dev/null; then
+    personal_ok=true
+  fi
+  if gh api repos/nightowlstudiollc/kebab-tax --jq '.full_name' &>/dev/null; then
+    org_ok=true
+  fi
+
+  if [[ "${personal_ok}" == "true" && "${org_ok}" == "true" ]]; then
+    pass "Both personal and org repos accessible in same session"
+  elif [[ "${personal_ok}" == "true" ]]; then
+    fail "Personal works but org fails in same session"
+  elif [[ "${org_ok}" == "true" ]]; then
+    fail "Org works but personal fails in same session"
+  else
+    fail "Neither personal nor org repos accessible"
+  fi
+else
+  skip "Cannot test multi-org flow without org token file"
+fi
+
+# =============================================================================
+# SECTION 6: Token Scope Verification
+# =============================================================================
+section "6. Token Scope Summary"
 
 echo -e "${BOLD}Fine-grained PAT capabilities:${NC}"
 

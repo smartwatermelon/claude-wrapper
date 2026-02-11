@@ -667,6 +667,211 @@ test_graceful_degradation() {
 }
 
 # =============================================================================
+# SECTION 6: Token Router Tests - Multi-org token routing
+# =============================================================================
+
+test_gh_token_router_module_exists() {
+  echo ""
+  echo "Test 6.1: Token router module exists"
+  assert_file_exists "${LIB_DIR}/gh-token-router.sh" "gh-token-router.sh module exists"
+
+  local module_content
+  module_content="$(cat "${LIB_DIR}/gh-token-router.sh")"
+  assert_contains "detect_repo_owner()" "${module_content}" "Exports detect_repo_owner function"
+  assert_contains "select_gh_token()" "${module_content}" "Exports select_gh_token function"
+  assert_contains "_check_token_perms()" "${module_content}" "Has inline permission check"
+}
+
+test_detect_repo_owner_from_repo_flag() {
+  echo ""
+  echo "Test 6.2: detect_repo_owner from --repo flag"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  local owner
+
+  # --repo OWNER/REPO
+  owner="$(bash -c "source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null; detect_repo_owner pr list --repo smartwatermelon/claude-wrapper")"
+  assert_equals "smartwatermelon" "${owner}" "--repo extracts owner correctly"
+
+  # -R OWNER/REPO
+  owner="$(bash -c "source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null; detect_repo_owner pr list -R nightowlstudiollc/kebab-tax")"
+  assert_equals "nightowlstudiollc" "${owner}" "-R extracts owner correctly"
+}
+
+test_detect_repo_owner_from_api_path() {
+  echo ""
+  echo "Test 6.3: detect_repo_owner from API path"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  local owner
+
+  # repos/OWNER/REPO/...
+  owner="$(bash -c "source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null; detect_repo_owner api repos/nightowlstudiollc/kebab-tax/pulls")"
+  assert_equals "nightowlstudiollc" "${owner}" "repos/ API path extracts owner"
+
+  # orgs/OWNER/...
+  owner="$(bash -c "source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null; detect_repo_owner api orgs/nightowlstudiollc/repos")"
+  assert_equals "nightowlstudiollc" "${owner}" "orgs/ API path extracts owner"
+}
+
+test_detect_repo_owner_from_git_remote() {
+  echo ""
+  echo "Test 6.4: detect_repo_owner from git remote"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  # Create a temp git repo with a fake remote
+  local test_repo="${TEST_TMP}/fake-repo"
+  mkdir -p "${test_repo}"
+  git -C "${test_repo}" init -q
+  git -C "${test_repo}" remote add origin "git@github.com:testowner/testrepo.git"
+
+  local owner
+  owner="$(cd "${test_repo}" && bash -c "source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null; detect_repo_owner some-command")"
+  assert_equals "testowner" "${owner}" "Git remote extracts owner from SSH URL"
+
+  # Test HTTPS remote
+  git -C "${test_repo}" remote set-url origin "https://github.com/httpsowner/httpsrepo.git"
+  owner="$(cd "${test_repo}" && bash -c "source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null; detect_repo_owner some-command")"
+  assert_equals "httpsowner" "${owner}" "Git remote extracts owner from HTTPS URL"
+}
+
+test_select_gh_token_owner_specific() {
+  echo ""
+  echo "Test 6.5: select_gh_token loads owner-specific token"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  # Create mock token directory with owner-specific tokens
+  local token_dir="${TEST_TMP}/token-test"
+  mkdir -p "${token_dir}"
+  echo "default-token-value" >"${token_dir}/gh-token"
+  echo "org-token-value" >"${token_dir}/gh-token.myorg"
+  chmod 600 "${token_dir}/gh-token"
+  chmod 600 "${token_dir}/gh-token.myorg"
+
+  # select_gh_token should pick up the org token for --repo myorg/repo
+  local result
+  result="$(CLAUDE_GH_TOKEN_DIR="${token_dir}" GH_TOKEN="default-token-value" bash -c "
+    source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null
+    select_gh_token api repos/myorg/somerepo/pulls
+    echo \"\${GH_TOKEN}\"
+  ")"
+  assert_equals "org-token-value" "${result}" "Owner-specific token loaded for matching owner"
+}
+
+test_select_gh_token_fallback() {
+  echo ""
+  echo "Test 6.6: select_gh_token falls back to default"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  # Create mock token directory with only default token
+  local token_dir="${TEST_TMP}/token-fallback"
+  mkdir -p "${token_dir}"
+  echo "default-token-value" >"${token_dir}/gh-token"
+  chmod 600 "${token_dir}/gh-token"
+
+  # No owner-specific file exists for "unknownorg" — should keep default
+  local result
+  result="$(CLAUDE_GH_TOKEN_DIR="${token_dir}" GH_TOKEN="default-token-value" bash -c "
+    source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null
+    select_gh_token api repos/unknownorg/somerepo/pulls
+    echo \"\${GH_TOKEN}\"
+  ")"
+  assert_equals "default-token-value" "${result}" "Falls back to default token when no owner file"
+}
+
+test_select_gh_token_rejects_insecure_perms() {
+  echo ""
+  echo "Test 6.7: select_gh_token rejects insecure permissions"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  # Create mock token directory with insecure owner token
+  local token_dir="${TEST_TMP}/token-insecure"
+  mkdir -p "${token_dir}"
+  echo "insecure-org-token" >"${token_dir}/gh-token.badorg"
+  chmod 644 "${token_dir}/gh-token.badorg"
+
+  local exit_code=0
+  CLAUDE_GH_TOKEN_DIR="${token_dir}" GH_TOKEN="default-token-value" bash -c "
+    source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null
+    select_gh_token api repos/badorg/somerepo/pulls
+  " 2>/dev/null || exit_code=$?
+
+  assert_exit_code "1" "${exit_code}" "Rejects token file with insecure permissions"
+}
+
+test_select_gh_token_rejects_path_traversal() {
+  echo ""
+  echo "Test 6.8: select_gh_token rejects path traversal in owner"
+
+  if [[ ! -f "${LIB_DIR}/gh-token-router.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - gh-token-router.sh does not exist"
+    return 0
+  fi
+
+  local token_dir="${TEST_TMP}/token-traversal"
+  mkdir -p "${token_dir}"
+
+  local exit_code=0
+  CLAUDE_GH_TOKEN_DIR="${token_dir}" GH_TOKEN="default" bash -c "
+    source '${LIB_DIR}/gh-token-router.sh' 2>/dev/null
+    select_gh_token api repos/../../tmp/evil/pulls
+  " 2>/dev/null || exit_code=$?
+
+  assert_exit_code "1" "${exit_code}" "Rejects path traversal in owner name"
+}
+
+test_github_token_exports_router_vars() {
+  echo ""
+  echo "Test 6.9: github-token.sh exports router env vars"
+
+  local module_content
+  module_content="$(cat "${LIB_DIR}/github-token.sh")"
+
+  assert_contains "CLAUDE_GH_TOKEN_DIR" "${module_content}" "github-token.sh references CLAUDE_GH_TOKEN_DIR"
+  assert_contains "CLAUDE_GH_TOKEN_ROUTER" "${module_content}" "github-token.sh references CLAUDE_GH_TOKEN_ROUTER"
+  assert_contains "export CLAUDE_GH_TOKEN_DIR" "${module_content}" "Exports CLAUDE_GH_TOKEN_DIR"
+  assert_contains "export CLAUDE_GH_TOKEN_ROUTER" "${module_content}" "Exports CLAUDE_GH_TOKEN_ROUTER"
+}
+
+# =============================================================================
 # Main test runner
 # =============================================================================
 
@@ -716,6 +921,19 @@ main() {
   echo "--- Section 5: Regression Tests ---"
   test_debug_logging_coverage
   test_graceful_degradation
+
+  # Section 6: Token Router Tests
+  echo ""
+  echo "--- Section 6: Token Router Tests ---"
+  test_gh_token_router_module_exists
+  test_detect_repo_owner_from_repo_flag
+  test_detect_repo_owner_from_api_path
+  test_detect_repo_owner_from_git_remote
+  test_select_gh_token_owner_specific
+  test_select_gh_token_fallback
+  test_select_gh_token_rejects_insecure_perms
+  test_select_gh_token_rejects_path_traversal
+  test_github_token_exports_router_vars
 
   echo ""
   echo "======================================"
