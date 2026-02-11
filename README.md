@@ -66,17 +66,40 @@ cat ~/.ssh/id_ed25519_claude_code.pub
 
 #### GitHub Token (Optional)
 
-Create a GitHub token for Claude CLI operations:
+Create a GitHub fine-grained PAT for Claude CLI operations:
 
 ```bash
-# Create token at: https://github.com/settings/tokens
-# Required scopes: repo, workflow
+# Create token at: https://github.com/settings/personal-access-tokens/new
+# Required permissions: Contents (R/W), Pull requests (R/W), Actions (R)
 
-# Save token
+# Save token (single account)
 mkdir -p ~/.config/claude-code
 echo "your_github_token_here" > ~/.config/claude-code/gh-token
 chmod 600 ~/.config/claude-code/gh-token
 ```
+
+#### Multi-Org Token Routing (Optional)
+
+Fine-grained PATs are scoped to a single owner (user or organization). To work
+with repos across multiple owners, create one token per owner:
+
+```bash
+# Personal repos (resource owner: your username)
+echo "github_pat_personal..." > ~/.config/claude-code/gh-token.smartwatermelon
+chmod 600 ~/.config/claude-code/gh-token.smartwatermelon
+
+# Organization repos (resource owner: the org)
+echo "github_pat_org..." > ~/.config/claude-code/gh-token.nightowlstudiollc
+chmod 600 ~/.config/claude-code/gh-token.nightowlstudiollc
+
+# Keep a default fallback (or copy one of the above)
+cp ~/.config/claude-code/gh-token.smartwatermelon ~/.config/claude-code/gh-token
+```
+
+The wrapper detects the target repo owner from `gh` CLI arguments (e.g.,
+`--repo owner/repo`, API paths like `repos/owner/...`) or the git remote of
+the current directory, then loads the matching `gh-token.<owner>` file. If no
+owner-specific file exists, it falls back to `gh-token`.
 
 #### 1Password Secrets (Optional)
 
@@ -163,7 +186,8 @@ claude-wrapper/
 │   ├── permissions.sh          # File permission validation
 │   ├── path-security.sh        # Path canonicalization and traversal protection
 │   ├── git-identity.sh         # Git author/committer identity
-│   ├── github-token.sh         # GitHub CLI token loading
+│   ├── github-token.sh         # GitHub CLI token loading + multi-org routing setup
+│   ├── gh-token-router.sh     # Per-invocation token selection (sourced by gh wrapper)
 │   ├── secrets-loader.sh       # 1Password integration
 │   ├── binary-discovery.sh     # Claude binary search/validation
 │   └── pre-launch.sh           # Project-specific pre-launch hooks
