@@ -1,3 +1,6 @@
+# Legacy POC scripts (removed from history)
+poc/
+
 # Local secrets override (never commit)
 .claude/secrets.local.op
 
