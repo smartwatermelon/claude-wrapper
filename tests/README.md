@@ -9,6 +9,7 @@ Comprehensive test suite for the `claude-wrapper` wrapper script. Tests cover fu
 ```bash
 # Run all tests
 ./tests/test-wrapper.sh
+./tests/test-remote-session.sh
 
 # With verbose output
 VERBOSE=true ./tests/test-wrapper.sh
@@ -55,6 +56,12 @@ VERBOSE=true ./tests/test-wrapper.sh
 - Mock claude execution
 - Environment variable passing
 - Subprocess inheritance
+
+### 7. Remote Session Tests (`test-remote-session.sh`)
+
+- `is_interactive_session`: detects interactive vs. non-interactive invocations
+- `get_remote_session_name`: derives name from git repo or directory
+- `build_remote_control_args`: full injection logic including opt-out via `CLAUDE_NO_REMOTE_CONTROL`
 
 ## Test Output
 
