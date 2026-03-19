@@ -26,6 +26,7 @@ get_remote_session_name() {
 #   Any positional arg   : subcommand (e.g. remote-control, mcp, help, update)
 is_interactive_session() {
   local found_double_dash=0
+  local saw_flag=0
 
   for arg in "$@"; do
     if [[ "${found_double_dash}" -eq 1 ]]; then
@@ -47,11 +48,16 @@ is_interactive_session() {
         return 1
         ;;
       -*)
-        # Other flags are fine; skip (handles --flag value pairs conservatively)
+        # Flag seen — subsequent bare words are values, not subcommands
+        saw_flag=1
         ;;
       *)
-        # Bare positional arg → subcommand; not interactive
-        return 1
+        # Bare positional arg: only a subcommand when it precedes all flags.
+        # Subcommands (remote-control, mcp, etc.) always come before flags.
+        # Flag values (e.g. the "hello" in -c "hello") always follow their flag.
+        if [[ "${saw_flag}" -eq 0 ]]; then
+          return 1
+        fi
         ;;
     esac
   done

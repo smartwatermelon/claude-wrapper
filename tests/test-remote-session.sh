@@ -110,6 +110,18 @@ assert_false "$(run_is_interactive help)" \
 assert_false "$(run_is_interactive -- --flag)" \
   "args after -- → non-interactive"
 
+assert_true "$(run_is_interactive -c "hello there")" \
+  "-c with value → interactive (value not mistaken for subcommand)"
+
+assert_true "$(run_is_interactive --model claude-opus-4-6)" \
+  "--model with value → interactive"
+
+assert_true "$(run_is_interactive --resume abc123)" \
+  "--resume with value → interactive"
+
+assert_false "$(run_is_interactive remote-control --verbose)" \
+  "subcommand before flags → non-interactive"
+
 # --- Tests: get_remote_session_name ---
 
 echo ""
