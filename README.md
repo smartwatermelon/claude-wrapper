@@ -4,6 +4,7 @@ Custom wrapper for Claude Code CLI with identity management and 1Password secret
 
 ## Features
 
+- **Auto Remote Control**: Every interactive session is automatically named and accessible from claude.ai/code and the Claude mobile app
 - **Git Identity Management**: Separate git identity for Claude Code operations
 - **SSH Key Isolation**: Dedicated SSH key for Claude git operations
 - **GitHub Token Management**: Separate GitHub CLI token
@@ -126,7 +127,7 @@ EOF
 Use `claude` command as normal:
 
 ```bash
-# Normal usage
+# Normal usage — automatically starts a named remote session
 claude
 
 # With debug output
@@ -135,6 +136,12 @@ CLAUDE_DEBUG=true claude
 # Pass arguments
 claude -c "your command here"
 claude --version
+
+# Opt out of remote control for one session
+CLAUDE_NO_REMOTE_CONTROL=true claude
+
+# Already has --remote-control? Wrapper skips injection
+claude --remote-control "Custom Name"
 ```
 
 The wrapper:
@@ -142,7 +149,36 @@ The wrapper:
 1. Sets git identity
 2. Authenticates with 1Password (once per session)
 3. Loads secrets from multi-level files
-4. Passes through to real Claude CLI
+4. Injects `--remote-control <session-name>` for interactive sessions
+5. Passes through to real Claude CLI
+
+### Remote Control
+
+Every interactive `claude` invocation automatically registers a remote session named after the current git repository (or directory when outside a git repo). This lets you pick up any session from [claude.ai/code](https://claude.ai/code) or the Claude mobile app.
+
+```
+~/Developer/my-app $ claude
+# → equivalent to: claude --remote-control "my-app"
+```
+
+Session naming priority (per Claude docs):
+
+1. Name injected by the wrapper (repo or directory name)
+2. `/rename` inside the session
+3. Last meaningful message in conversation history
+4. Your first prompt
+
+**Opt-out options:**
+
+| Method | Scope |
+| ------ | ----- |
+| `CLAUDE_NO_REMOTE_CONTROL=true claude` | Single session |
+| `export CLAUDE_NO_REMOTE_CONTROL=true` | Shell session |
+| `/config` → "Enable Remote Control for all sessions" → `false` | Persisted in Claude config |
+
+Remote control is skipped automatically for non-interactive invocations: `--print`/`-p`, `--version`, `--help`, subcommands (`remote-control`, `mcp`, etc.), and script automation (`--no-session-persistence`).
+
+> **Requirements**: Claude Code v2.1.51+, claude.ai authentication (not API key), Pro/Max/Team/Enterprise plan.
 
 ## Documentation
 
@@ -170,6 +206,7 @@ The wrapper:
 ```bash
 # Run all automated tests
 ./tests/test-wrapper.sh
+./tests/test-remote-session.sh
 
 # Run with verbose output
 VERBOSE=true ./tests/test-wrapper.sh
@@ -190,12 +227,14 @@ claude-wrapper/
 │   ├── gh-token-router.sh     # Per-invocation token selection (sourced by gh wrapper)
 │   ├── secrets-loader.sh       # 1Password integration
 │   ├── binary-discovery.sh     # Claude binary search/validation
-│   └── pre-launch.sh           # Project-specific pre-launch hooks
+│   ├── pre-launch.sh           # Project-specific pre-launch hooks
+│   └── remote-session.sh       # Automatic remote control session naming
 ├── docs/
 │   ├── SECRETS.md              # 1Password documentation
 │   └── SECURITY.md             # Security hardening documentation
 ├── tests/
 │   ├── test-wrapper.sh         # Test suite
+│   ├── test-remote-session.sh  # Remote session module tests
 │   └── README.md               # Test documentation
 ├── .claude/                    # Project-specific Claude config
 ├── .gitignore
@@ -248,6 +287,24 @@ claude --agent code-reviewer bin/claude-wrapper lib/
 - Enable TouchID for 1Password app
 
 ## Troubleshooting
+
+### Remote control not connecting
+
+```bash
+# Verify Claude Code version (requires v2.1.51+)
+claude --version
+
+# Check you're using claude.ai auth (not API key)
+# API keys do not support Remote Control
+
+# Disable and re-enable for one session
+CLAUDE_NO_REMOTE_CONTROL=true claude
+
+# Debug injection
+CLAUDE_DEBUG=true claude --version 2>&1 | grep -i remote
+```
+
+If you're on a Team or Enterprise plan, an admin must enable the Remote Control toggle in [Claude Code admin settings](https://claude.ai/admin-settings/claude-code).
 
 ### Wrapper not found
 
@@ -320,6 +377,15 @@ MIT License - see LICENSE file for details
 - [GitHub CLI](https://cli.github.com/) - GitHub command-line tool
 
 ## Changelog
+
+### v3.1.0 (2026-03-19)
+
+- **Auto Remote Control**: Every interactive `claude` invocation now automatically registers a named remote session
+  - Session named after the git repository root (or current directory outside a repo)
+  - Skipped automatically for non-interactive uses (`--print`, `--version`, subcommands, `--no-session-persistence`)
+  - Opt-out via `CLAUDE_NO_REMOTE_CONTROL=true`
+- New module: `lib/remote-session.sh`
+- New test suite: `tests/test-remote-session.sh` (22 tests)
 
 ### v3.0.0 (2026-02-01)
 

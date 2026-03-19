@@ -34,6 +34,9 @@ source "${WRAPPER_LIB}/binary-discovery.sh"
 # shellcheck source=../lib/pre-launch.sh
 source "${WRAPPER_LIB}/pre-launch.sh"
 
+# shellcheck source=../lib/remote-session.sh
+source "${WRAPPER_LIB}/remote-session.sh"
+
 # Find and validate the real claude binary
 CLAUDE_BIN=""
 if ! CLAUDE_BIN="$(find_claude_binary "${WRAPPER_PATH}")"; then
@@ -48,6 +51,12 @@ fi
 
 # Initialize secrets loader (discovers files, authenticates if needed)
 init_secrets_loader
+
+# Build remote control args (empty array if not applicable)
+RC_ARGS=()
+while IFS= read -r line; do
+  RC_ARGS+=("${line}")
+done < <(build_remote_control_args "$@" || true)
 
 # Launch claude with or without secrets injection
 if secrets_available; then
@@ -65,9 +74,9 @@ if secrets_available; then
     fi
   fi
 
-  debug_log "Executing: ${CLAUDE_BIN} [${#} args] with secrets loaded"
-  exec "${CLAUDE_BIN}" "$@"
+  debug_log "Executing: ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
+  exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
 else
-  debug_log "Executing: ${CLAUDE_BIN} [${#} args]"
-  exec "${CLAUDE_BIN}" "$@"
+  debug_log "Executing: ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
+  exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
 fi
