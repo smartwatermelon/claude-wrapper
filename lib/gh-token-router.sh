@@ -102,7 +102,9 @@ select_gh_token() {
     fi
 
     # Check for 1Password-injected env var (GH_TOKEN_{OWNER}) before flat file
-    local env_var_name="GH_TOKEN_${owner^^}"
+    local normalized_owner="${owner^^}"
+    normalized_owner="${normalized_owner//[.-]/_}"
+    local env_var_name="GH_TOKEN_${normalized_owner}"
     if [[ -n "${!env_var_name:-}" ]]; then
       GH_TOKEN="${!env_var_name}"
       export GH_TOKEN
