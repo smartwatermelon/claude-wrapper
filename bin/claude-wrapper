@@ -60,12 +60,17 @@ done < <(build_remote_control_args "$@" || true)
 
 # Launch claude with or without secrets injection
 if secrets_available; then
-  # Inject secrets into environment
+  # Inject secrets into environment (sets GH_TOKEN_* from 1Password)
   if ! inject_secrets; then
     log_error "Failed to inject secrets"
     exit 1
   fi
+fi
 
+# Load GitHub token AFTER secrets injection so 1Password env vars are available
+load_github_token
+
+if secrets_available; then
   # Run pre-launch hook if available
   GIT_ROOT="$(get_git_root)"
   if [[ -n "${GIT_ROOT}" ]]; then
