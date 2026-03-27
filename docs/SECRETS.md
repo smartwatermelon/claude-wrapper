@@ -152,6 +152,29 @@ DATABASE_URL=op://Local/TestDB/url
 DEBUG_MODE=true
 ```
 
+### GitHub Token Integration
+
+The wrapper's multi-org token router checks for `GH_TOKEN_{OWNER}` environment
+variables before falling back to flat files at `~/.config/claude-code/gh-token.*`.
+This lets you manage GitHub tokens in 1Password and have them resolve dynamically:
+
+```bash
+# ~/.config/claude-code/secrets.op
+
+# Default GitHub token (overrides gh-token flat file)
+GH_TOKEN=op://Personal/github-bot/token
+
+# Per-org tokens (owner name uppercased, used by gh-token-router.sh)
+GH_TOKEN_MYORG=op://Personal/github-bot/Other Fields/myorg-token
+GH_TOKEN_PERSONALACCT=op://Personal/github-bot/Other Fields/personal-token
+```
+
+When you rotate a token in 1Password, all new wrapper sessions pick up the
+change automatically — no flat file updates needed.
+
+The flat files remain a fallback for environments where 1Password is unavailable
+(CI, headless servers, etc.).
+
 ### .gitignore Configuration
 
 Add to project `.gitignore`:
