@@ -301,6 +301,7 @@ inject_secrets() {
   chmod 700 "${temp_dir}"
 
   # Process each secrets file using op inject
+  local file_index=0
   for secrets_file in "${secret_files[@]}"; do
     debug_log "Injecting secrets from: ${secrets_file}"
 
@@ -311,13 +312,14 @@ inject_secrets() {
     fi
 
     # Strip comments before passing to op inject
+    # Use index prefix to avoid basename collisions (e.g. global and project secrets.op)
     local stripped_file
-    stripped_file="${temp_dir}/stripped-$(basename "${secrets_file}")"
+    stripped_file="${temp_dir}/${file_index}-stripped-$(basename "${secrets_file}")"
     grep -v '^[[:space:]]*#' "${secrets_file}" >"${stripped_file}" || true
 
     # Create temp file for resolved secrets
     local resolved_file
-    resolved_file="${temp_dir}/resolved-$(basename "${secrets_file}")"
+    resolved_file="${temp_dir}/${file_index}-resolved-$(basename "${secrets_file}")"
 
     # Inject 1Password references (suppress stderr to avoid leaking reference names)
     if ! op inject --in-file="${stripped_file}" --out-file="${resolved_file}" 2>/dev/null; then
@@ -328,7 +330,7 @@ inject_secrets() {
 
     # Normalize resolved file: quote unquoted values
     local normalized_file
-    normalized_file="${temp_dir}/normalized-$(basename "${secrets_file}")"
+    normalized_file="${temp_dir}/${file_index}-normalized-$(basename "${secrets_file}")"
     normalize_env_file "${resolved_file}" "${normalized_file}"
     mv "${normalized_file}" "${resolved_file}"
 
@@ -353,6 +355,7 @@ inject_secrets() {
     set +a
 
     debug_log "Loaded secrets from ${secrets_file}"
+    ((file_index += 1))
   done
 
   # Clean up temp directory
