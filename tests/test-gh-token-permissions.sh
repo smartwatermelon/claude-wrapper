@@ -98,7 +98,7 @@ if [[ "${GIT_AUTHOR_NAME:-}" != "Claude Code Bot" ]]; then
   echo "Usage: Ask Claude Code (via wrapper):"
   echo "  Run ~/Developer/claude-wrapper/tests/test-gh-token-permissions.sh"
   echo ""
-  echo "GIT_AUTHOR_NAME is not set — wrapper environment is not active."
+  echo "GIT_AUTHOR_NAME is not 'Claude Code Bot' — wrapper environment is not active."
   exit 1
 fi
 
@@ -140,7 +140,7 @@ if [[ -n "${GH_TOKEN:-}" ]]; then
     fail "GH_TOKEN prefix not recognized (prefix: ${GH_TOKEN:0:10}...)"
   fi
 else
-  fail "GH_TOKEN is not set — wrapper did not inject token"
+  fail "GH_TOKEN is not set — check that ~/.config/bash/1password.sh is sourced at shell startup"
   echo -e "  ${RED}Cannot continue without GH_TOKEN. Aborting.${NC}"
   exit 1
 fi

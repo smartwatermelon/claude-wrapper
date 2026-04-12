@@ -41,7 +41,7 @@ Enables verbose `DEBUG:` output to stderr from all modules.
 The wrapper is a single orchestrator that sources modules in dependency order, then `exec`s the real binary:
 
 1. **Resolve own path** — `realpath` to handle symlinks
-2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `git-identity.sh` → `secrets-loader.sh` → `binary-discovery.sh`
+2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `git-identity.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh`
 3. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
 4. **Validate binary** — ownership and permission checks on the discovered binary
 5. **Load pre-launch hook** — runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
