@@ -22,6 +22,9 @@ source "${WRAPPER_LIB}/path-security.sh"
 # shellcheck source=../lib/git-identity.sh
 source "${WRAPPER_LIB}/git-identity.sh"
 
+# shellcheck source=../lib/credentials.sh
+source "${WRAPPER_LIB}/credentials.sh"
+
 # shellcheck source=../lib/secrets-loader.sh
 source "${WRAPPER_LIB}/secrets-loader.sh"
 
