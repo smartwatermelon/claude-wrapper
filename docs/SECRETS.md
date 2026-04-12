@@ -154,26 +154,19 @@ DEBUG_MODE=true
 
 ### GitHub Token Integration
 
-The wrapper's multi-org token router checks for `GH_TOKEN_{OWNER}` environment
-variables before falling back to flat files at `~/.config/claude-code/gh-token.*`.
-This lets you manage GitHub tokens in 1Password and have them resolve dynamically:
+`GH_TOKEN` is injected into your shell environment at startup — not by the
+wrapper. The recommended setup resolves the token from the 1Password
+Automation vault via a service account:
 
 ```bash
-# ~/.config/claude-code/secrets.op
-
-# Default GitHub token (overrides gh-token flat file)
-GH_TOKEN=op://Personal/github-bot/token
-
-# Per-org tokens (owner name uppercased, used by gh-token-router.sh)
-GH_TOKEN_MYORG=op://Personal/github-bot/Other Fields/myorg-token
-GH_TOKEN_PERSONALACCT=op://Personal/github-bot/Other Fields/personal-token
+# ~/.config/bash/1password.sh (sourced by ~/.bashrc / ~/.zshrc)
+export GH_TOKEN="$(op read 'op://Automation/GitHub - CCCLI/Token')"
 ```
 
-When you rotate a token in 1Password, all new wrapper sessions pick up the
-change automatically — no flat file updates needed.
-
-The flat files remain a fallback for environments where 1Password is unavailable
-(CI, headless servers, etc.).
+When you rotate the token in 1Password, new shells pick it up automatically.
+The wrapper does not load flat token files and does not perform per-org
+routing — if you need multiple tokens for different owners, manage them
+yourself (e.g., direnv, per-project `.envrc`).
 
 ### .gitignore Configuration
 
@@ -239,13 +232,11 @@ CLAUDE_DEBUG=true claude
 ```
 DEBUG: Git identity: Claude Code Bot <claude-code@smartwatermelon.github>
 DEBUG: Using SSH key: /Users/you/.ssh/id_ed25519_claude_code
-DEBUG: GitHub token loaded from: /Users/you/.config/claude-code/gh-token
 DEBUG: 1Password CLI detected (version: 2.32.0)
 DEBUG: Active 1Password session detected
-DEBUG: Added global secrets: /Users/you/.config/claude-code/secrets.op
 DEBUG: Added project secrets: ./.claude/secrets.op
-DEBUG: 1Password enabled with 2 secrets file(s)
-DEBUG: Executing: op run --env-file=/Users/you/.config/claude-code/secrets.op --env-file=./.claude/secrets.op -- /opt/homebrew/bin/claude
+DEBUG: 1Password enabled with 1 secrets file(s)
+DEBUG: Executing: op inject --in-file=./.claude/secrets.op --out-file=... -- /opt/homebrew/bin/claude
 ```
 
 ## Security Best Practices
@@ -346,7 +337,7 @@ Output shows which files loaded in order. Last file wins for duplicate variables
 | `GIT_COMMITTER_NAME` | `Claude Code Bot` | Git committer |
 | `GIT_COMMITTER_EMAIL` | `claude-code@smartwatermelon.github` | Git committer email |
 | `GIT_SSH_COMMAND` | `ssh -i ~/.ssh/id_ed25519_claude_code ...` | SSH key for git |
-| `GH_TOKEN` | From `~/.config/claude-code/gh-token` | GitHub CLI token |
+| `GH_TOKEN` | Inherited from shell env (set at shell startup, not by wrapper) | GitHub CLI token |
 
 ### Loaded from secrets.op
 

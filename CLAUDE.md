@@ -57,7 +57,8 @@ Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` 
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
 - **`remote-session.sh`** — derives a session name from the git repo basename, injects `--remote-control` for interactive sessions only
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks
-- **`github-token.sh`** / **`gh-token-router.sh`** — legacy modules, no longer sourced by the wrapper; `GH_TOKEN` is now injected at shell startup via `~/.config/bash/1password.sh`
+
+`GH_TOKEN` is injected at shell startup via `~/.config/bash/1password.sh` (Automation vault, service account) — not by the wrapper.
 
 ### Security model
 
@@ -80,7 +81,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 *~800 tokens/session saved*
 
-- Key lib files: `lib/secrets-loader.sh`, `lib/pre-launch.sh`, `lib/remote-session.sh` (`lib/github-token.sh` and `lib/gh-token-router.sh` are legacy, not sourced)
+- Key lib files: `lib/secrets-loader.sh`, `lib/pre-launch.sh`, `lib/remote-session.sh`
 - Per-project secrets: `.claude/secrets.op` (committed), `.claude/secrets.local.op` (gitignored)
 - Client repos live at `/Users/andrewrich/Developer/clients/` (not `client/` — singular form causes file_not_found errors)
 - `tests/test-wrapper.sh` exceeds the 10,000-token read limit (~10,746 tokens); always use `offset` and `limit` params or `grep` to read specific portions
@@ -100,7 +101,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 - `GH_TOKEN` is injected at shell startup from `op://Automation/GitHub - CCCLI/Token` via `~/.config/bash/1password.sh`; no flat token files exist
 - Per-project secrets live in `.claude/secrets.op` (committed) referencing `op://Automation/...`; resolved by `secrets-loader.sh` via `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID)
-- The global `~/.config/claude-code/secrets.op` no longer exists; `github-token.sh` and `gh-token-router.sh` are legacy and not sourced by the wrapper
+- The global `~/.config/claude-code/secrets.op` no longer exists
 - `opp <args>` runs `op` as your personal account (unsets service account token for that subprocess); needed for Personal vault access (e.g. prep-airdrop.sh)
 
 ### Pre-commit Hooks
