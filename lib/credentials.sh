@@ -8,6 +8,10 @@
 # Requires: lib/logging.sh must be sourced first.
 # Must be sourced before lib/secrets-loader.sh (which needs OP_SERVICE_ACCOUNT_TOKEN).
 
+# Source guard — avoid "readonly variable" errors if sourced twice.
+[[ -n "${_CREDENTIALS_SH_LOADED:-}" ]] && return 0
+readonly _CREDENTIALS_SH_LOADED=1
+
 # =========================================================
 # CONFIGURATION
 # =========================================================
@@ -70,7 +74,11 @@ _load_gh_token() {
   fi
 
   local token
-  token="$(op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
+  if command -v timeout &>/dev/null; then
+    token="$(timeout 5 op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
+  else
+    token="$(op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
+  fi
 
   if [[ -n "${token}" ]]; then
     export GH_TOKEN="${token}"
