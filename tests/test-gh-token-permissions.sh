@@ -39,6 +39,7 @@ SKIP=0
 TEST_PR_NUMBER=""
 
 # --- Cleanup ---
+# shellcheck disable=SC2329  # invoked indirectly via `trap cleanup EXIT` below
 cleanup() {
   echo ""
   echo -e "${CYAN}--- Cleanup ---${NC}"
@@ -226,6 +227,7 @@ if [[ -n "${WORK_DIR:-}" ]] && [[ -d "${WORK_DIR}/repo" ]]; then
   if (
     cd "${WORK_DIR}/repo"
     git checkout -b "${TEST_BRANCH}" 2>/dev/null
+    # shellcheck disable=SC2312  # date failure here is non-fatal; return value not needed
     echo "# Token permission test — $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>README.md
     git add README.md
     git commit --no-verify -m "test: token permission verification (will be deleted)" 2>/dev/null
