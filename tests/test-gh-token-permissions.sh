@@ -87,6 +87,21 @@ section() {
 }
 
 # =============================================================================
+# GUARD: Must be run inside a claude-wrapper session
+# =============================================================================
+# GIT_AUTHOR_NAME is only set by git-identity.sh when the wrapper is active.
+# Running this script directly from a shell will not have the wrapper context.
+if [[ "${GIT_AUTHOR_NAME:-}" != "Claude Code Bot" ]]; then
+  echo -e "${RED}ERROR: This test must be run from inside a claude-wrapper session.${NC}"
+  echo ""
+  echo "Usage: Ask Claude Code (via wrapper):"
+  echo "  Run ~/Developer/claude-wrapper/tests/test-gh-token-permissions.sh"
+  echo ""
+  echo "GIT_AUTHOR_NAME is not set — wrapper environment is not active."
+  exit 1
+fi
+
+# =============================================================================
 # SECTION 1: Environment Checks
 # =============================================================================
 section "1. Wrapper Environment"
@@ -118,8 +133,10 @@ if [[ -n "${GH_TOKEN:-}" ]]; then
   pass "GH_TOKEN is set (${#GH_TOKEN} chars)"
   if [[ "${GH_TOKEN}" == github_pat_* ]]; then
     pass "GH_TOKEN is a fine-grained PAT (github_pat_ prefix)"
+  elif [[ "${GH_TOKEN}" == ghp_* ]]; then
+    pass "GH_TOKEN is a classic PAT (ghp_ prefix)"
   else
-    fail "GH_TOKEN does not look like a fine-grained PAT (prefix: ${GH_TOKEN:0:10}...)"
+    fail "GH_TOKEN prefix not recognized (prefix: ${GH_TOKEN:0:10}...)"
   fi
 else
   fail "GH_TOKEN is not set — wrapper did not inject token"

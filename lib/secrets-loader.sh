@@ -321,8 +321,8 @@ inject_secrets() {
     local resolved_file
     resolved_file="${temp_dir}/${file_index}-resolved-$(basename "${secrets_file}")"
 
-    # Inject 1Password references (suppress stderr to avoid leaking reference names)
-    if ! op inject --in-file="${stripped_file}" --out-file="${resolved_file}" 2>/dev/null; then
+    # Inject 1Password references (suppress all output to avoid leaking reference names or paths)
+    if ! op inject --in-file="${stripped_file}" --out-file="${resolved_file}" &>/dev/null; then
       log_error "Failed to inject secrets from ${secrets_file} - check 1Password references"
       rm -rf "${temp_dir}"
       return 1
