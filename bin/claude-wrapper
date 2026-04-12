@@ -22,9 +22,6 @@ source "${WRAPPER_LIB}/path-security.sh"
 # shellcheck source=../lib/git-identity.sh
 source "${WRAPPER_LIB}/git-identity.sh"
 
-# shellcheck source=../lib/github-token.sh
-source "${WRAPPER_LIB}/github-token.sh"
-
 # shellcheck source=../lib/secrets-loader.sh
 source "${WRAPPER_LIB}/secrets-loader.sh"
 
@@ -60,15 +57,12 @@ done < <(build_remote_control_args "$@" || true)
 
 # Launch claude with or without secrets injection
 if secrets_available; then
-  # Inject secrets into environment (sets GH_TOKEN_* from 1Password)
+  # Inject per-project secrets into environment
   if ! inject_secrets; then
     log_error "Failed to inject secrets"
     exit 1
   fi
 fi
-
-# Load GitHub token AFTER secrets injection so 1Password env vars are available
-load_github_token
 
 if secrets_available; then
   # Run pre-launch hook if available

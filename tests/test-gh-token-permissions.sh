@@ -39,6 +39,7 @@ SKIP=0
 TEST_PR_NUMBER=""
 
 # --- Cleanup ---
+# shellcheck disable=SC2329  # invoked indirectly via `trap cleanup EXIT` below
 cleanup() {
   echo ""
   echo -e "${CYAN}--- Cleanup ---${NC}"
@@ -87,6 +88,21 @@ section() {
 }
 
 # =============================================================================
+# GUARD: Must be run inside a claude-wrapper session
+# =============================================================================
+# GIT_AUTHOR_NAME is only set by git-identity.sh when the wrapper is active.
+# Running this script directly from a shell will not have the wrapper context.
+if [[ "${GIT_AUTHOR_NAME:-}" != "Claude Code Bot" ]]; then
+  echo -e "${RED}ERROR: This test must be run from inside a claude-wrapper session.${NC}"
+  echo ""
+  echo "Usage: Ask Claude Code (via wrapper):"
+  echo "  Run ~/Developer/claude-wrapper/tests/test-gh-token-permissions.sh"
+  echo ""
+  echo "GIT_AUTHOR_NAME is not 'Claude Code Bot' — wrapper environment is not active."
+  exit 1
+fi
+
+# =============================================================================
 # SECTION 1: Environment Checks
 # =============================================================================
 section "1. Wrapper Environment"
@@ -118,11 +134,13 @@ if [[ -n "${GH_TOKEN:-}" ]]; then
   pass "GH_TOKEN is set (${#GH_TOKEN} chars)"
   if [[ "${GH_TOKEN}" == github_pat_* ]]; then
     pass "GH_TOKEN is a fine-grained PAT (github_pat_ prefix)"
+  elif [[ "${GH_TOKEN}" == ghp_* ]]; then
+    pass "GH_TOKEN is a classic PAT (ghp_ prefix)"
   else
-    fail "GH_TOKEN does not look like a fine-grained PAT (prefix: ${GH_TOKEN:0:10}...)"
+    fail "GH_TOKEN prefix not recognized (prefix: ${GH_TOKEN:0:10}...)"
   fi
 else
-  fail "GH_TOKEN is not set — wrapper did not inject token"
+  fail "GH_TOKEN is not set — check that ~/.config/bash/1password.sh is sourced at shell startup"
   echo -e "  ${RED}Cannot continue without GH_TOKEN. Aborting.${NC}"
   exit 1
 fi
@@ -209,6 +227,7 @@ if [[ -n "${WORK_DIR:-}" ]] && [[ -d "${WORK_DIR}/repo" ]]; then
   if (
     cd "${WORK_DIR}/repo"
     git checkout -b "${TEST_BRANCH}" 2>/dev/null
+    # shellcheck disable=SC2312  # date failure here is non-fatal; return value not needed
     echo "# Token permission test — $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>README.md
     git add README.md
     git commit --no-verify -m "test: token permission verification (will be deleted)" 2>/dev/null
@@ -328,80 +347,9 @@ else
 fi
 
 # =============================================================================
-# SECTION 5: Cross-Org Token Routing
+# SECTION 5: Token Scope Verification
 # =============================================================================
-section "5. Cross-Org Token Routing"
-
-echo -e "${BOLD}Multi-org token routing:${NC}"
-
-# 5.1 Check if router env vars are set
-if [[ -n "${CLAUDE_GH_TOKEN_DIR:-}" ]]; then
-  pass "CLAUDE_GH_TOKEN_DIR is set: ${CLAUDE_GH_TOKEN_DIR}"
-else
-  skip "CLAUDE_GH_TOKEN_DIR not set (multi-org routing not active)"
-fi
-
-if [[ -n "${CLAUDE_GH_TOKEN_ROUTER:-}" ]]; then
-  pass "CLAUDE_GH_TOKEN_ROUTER is set: ${CLAUDE_GH_TOKEN_ROUTER}"
-else
-  skip "CLAUDE_GH_TOKEN_ROUTER not set (multi-org routing not active)"
-fi
-
-# 5.2 Test personal repo access
-echo ""
-echo -e "${BOLD}Personal repo access:${NC}"
-if gh api repos/smartwatermelon/claude-wrapper --jq '.full_name' &>/dev/null; then
-  pass "Can access personal repo (smartwatermelon/claude-wrapper)"
-else
-  fail "Cannot access personal repo (smartwatermelon/claude-wrapper)"
-fi
-
-# 5.3 Test org repo access (requires gh-token.nightowlstudiollc to exist)
-echo ""
-echo -e "${BOLD}Organization repo access:${NC}"
-ORG_TOKEN_FILE="${CLAUDE_GH_TOKEN_DIR:-${HOME}/.config/claude-code}/gh-token.nightowlstudiollc"
-if [[ -f "${ORG_TOKEN_FILE}" ]]; then
-  org_result="$(gh api repos/nightowlstudiollc/kebab-tax --jq '.full_name' 2>&1)" || org_result=""
-  if [[ "${org_result}" == "nightowlstudiollc/kebab-tax" ]]; then
-    pass "Can access org repo (nightowlstudiollc/kebab-tax)"
-  else
-    fail "Cannot access org repo (nightowlstudiollc/kebab-tax)" "Got: ${org_result:0:100}"
-  fi
-else
-  skip "Org token file not found: ${ORG_TOKEN_FILE} (create PAT for nightowlstudiollc first)"
-fi
-
-# 5.4 Test that both work in the same flow
-echo ""
-echo -e "${BOLD}Same-session multi-org:${NC}"
-if [[ -f "${ORG_TOKEN_FILE}" ]]; then
-  personal_ok=false
-  org_ok=false
-
-  if gh api repos/smartwatermelon/claude-wrapper --jq '.full_name' &>/dev/null; then
-    personal_ok=true
-  fi
-  if gh api repos/nightowlstudiollc/kebab-tax --jq '.full_name' &>/dev/null; then
-    org_ok=true
-  fi
-
-  if [[ "${personal_ok}" == "true" && "${org_ok}" == "true" ]]; then
-    pass "Both personal and org repos accessible in same session"
-  elif [[ "${personal_ok}" == "true" ]]; then
-    fail "Personal works but org fails in same session"
-  elif [[ "${org_ok}" == "true" ]]; then
-    fail "Org works but personal fails in same session"
-  else
-    fail "Neither personal nor org repos accessible"
-  fi
-else
-  skip "Cannot test multi-org flow without org token file"
-fi
-
-# =============================================================================
-# SECTION 6: Token Scope Verification
-# =============================================================================
-section "6. Token Scope Summary"
+section "5. Token Scope Summary"
 
 echo -e "${BOLD}Fine-grained PAT capabilities:${NC}"
 

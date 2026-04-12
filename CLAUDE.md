@@ -41,11 +41,11 @@ Enables verbose `DEBUG:` output to stderr from all modules.
 The wrapper is a single orchestrator that sources modules in dependency order, then `exec`s the real binary:
 
 1. **Resolve own path** — `realpath` to handle symlinks
-2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `git-identity.sh` → `github-token.sh` → `secrets-loader.sh` → `binary-discovery.sh`
+2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `git-identity.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh`
 3. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
 4. **Validate binary** — ownership and permission checks on the discovered binary
 5. **Load pre-launch hook** — runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
-6. **Inject 1Password secrets** — `op inject` with `--env-file` from up to 3 secrets files
+6. **Inject 1Password secrets** — `op inject` resolves `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` from the shell environment (no TouchID prompt)
 7. **Inject remote-control args** — adds `--remote-control <session-name>` for interactive sessions
 8. **`exec`** — replaces the wrapper process with the real binary
 
@@ -53,26 +53,25 @@ The wrapper is a single orchestrator that sources modules in dependency order, t
 
 Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` and `path-security.sh` are foundational — other modules call their functions.
 
-- **`secrets-loader.sh`** — discovers secrets files at three levels (global `~/.config/claude-code/secrets.op`, project `.claude/secrets.op`, local `.claude/secrets.local.op`), validates permissions/paths, runs `op inject` to resolve 1Password references
-- **`github-token.sh`** — loads `GH_TOKEN` from flat files in `~/.config/claude-code/gh-token[.owner]`, sets up multi-org routing via `gh-token-router.sh`
-- **`gh-token-router.sh`** — sourced by the `gh` CLI wrapper at runtime (not by claude-wrapper), selects the correct fine-grained PAT based on the target repo owner parsed from `gh` arguments or `git remote`
+- **`secrets-loader.sh`** — discovers secrets files at two levels (project `.claude/secrets.op`, local `.claude/secrets.local.op`), validates permissions/paths, runs `op inject` to resolve `op://Automation/...` references against the Automation vault via service account
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
 - **`remote-session.sh`** — derives a session name from the git repo basename, injects `--remote-control` for interactive sessions only
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks
 
+`GH_TOKEN` is injected at shell startup via `~/.config/bash/1password.sh` (Automation vault, service account) — not by the wrapper.
+
 ### Security model
 
-All secret files (tokens, `.op` files) must be owner-only permissions (no group/world). Symlinks to secrets are rejected. Paths are canonicalized before use. The binary itself is validated for ownership and permissions before exec.
+All secret files (`.op` files) must be owner-only permissions (no group/world). Symlinks to secrets are rejected. Paths are canonicalized before use. The binary itself is validated for ownership and permissions before exec.
 
 ### Config file locations
 
 | File | Purpose |
 | ------ | ------- |
-| `~/.config/claude-code/secrets.op` | Global 1Password secret references |
-| `.claude/secrets.op` | Per-project 1Password secrets (committed) |
+| `.claude/secrets.op` | Per-project 1Password secrets (committed); references `op://Automation/...` |
 | `.claude/secrets.local.op` | Per-project local overrides (gitignored) |
-| `~/.config/claude-code/gh-token` | Default GitHub PAT |
-| `~/.config/claude-code/gh-token.<owner>` | Owner-specific GitHub PAT |
+
+`GH_TOKEN` is sourced from `op://Automation/GitHub - CCCLI/Token` at shell startup by `~/.config/bash/1password.sh`, not by the wrapper.
 
 ## Headroom Learned Patterns
 
@@ -82,8 +81,8 @@ All secret files (tokens, `.op` files) must be owner-only permissions (no group/
 
 *~800 tokens/session saved*
 
-- Key lib files: `lib/secrets-loader.sh`, `lib/github-token.sh`, `lib/gh-token-router.sh`, `lib/pre-launch.sh`, `lib/remote-session.sh`
-- Config files: `~/.config/claude-code/secrets.op` (1Password token refs), `~/.config/claude-code/gh-token*` (flat token files)
+- Key lib files: `lib/secrets-loader.sh`, `lib/pre-launch.sh`, `lib/remote-session.sh`
+- Per-project secrets: `.claude/secrets.op` (committed), `.claude/secrets.local.op` (gitignored)
 - Client repos live at `/Users/andrewrich/Developer/clients/` (not `client/` — singular form causes file_not_found errors)
 - `tests/test-wrapper.sh` exceeds the 10,000-token read limit (~10,746 tokens); always use `offset` and `limit` params or `grep` to read specific portions
 - `lib/secrets-loader.sh` is large (~13,000-15,000 tokens); read with offset/limit when possible
@@ -100,9 +99,10 @@ All secret files (tokens, `.op` files) must be owner-only permissions (no group/
 
 *~500 tokens/session saved*
 
-- GitHub tokens are resolved dynamically from 1Password via `~/.config/claude-code/secrets.op`; flat file `~/.config/claude-code/gh-token` is legacy and should not exist
-- Token env var convention: `GH_TOKEN_<OWNER>` where owner is the GitHub org/user (uppercase, hyphens replaced with underscores)
-- The `lib/gh-token-router.sh` resolves tokens per repo owner; no default/fallback token is set intentionally for isolation
+- `GH_TOKEN` is injected at shell startup from `op://Automation/GitHub - CCCLI/Token` via `~/.config/bash/1password.sh`; no flat token files exist
+- Per-project secrets live in `.claude/secrets.op` (committed) referencing `op://Automation/...`; resolved by `secrets-loader.sh` via `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID)
+- The global `~/.config/claude-code/secrets.op` no longer exists
+- `opp <args>` runs `op` as your personal account (unsets service account token for that subprocess); needed for Personal vault access (e.g. prep-airdrop.sh)
 
 ### Pre-commit Hooks
 
