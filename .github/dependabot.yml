@@ -1,0 +1,12 @@
+# Dependabot: auto-PR bumps for GitHub Actions pins in .github/workflows/.
+# Primary target: the smartwatermelon/github-workflows reusable workflow
+# (see https://github.com/smartwatermelon/github-workflows/releases).
+# Secondary: any other actions/* or third-party actions used here.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
