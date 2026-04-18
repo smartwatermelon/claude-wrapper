@@ -1,0 +1,45 @@
+name: Dependabot Auto-Merge
+
+# Safely auto-merges Dependabot PRs after CI passes. Scope is narrow:
+#  - Only runs when github.actor == 'dependabot[bot]' (not spoofable;
+#    GitHub sets this from the authenticated user).
+#  - Only auto-merges patch + minor updates; major-version bumps are
+#    left open for manual review.
+#  - Uses pull_request_target so the BASE-branch workflow runs, not
+#    the PR branch's — a PR modifying this file cannot bypass itself.
+#  - Never executes PR code; the only action taken is `gh pr merge
+#    --auto`, which is a GitHub-side API call.
+#
+# `gh pr review --approve` satisfies branch-protection rules that
+# require review. `--auto` means the merge only happens after all
+# status checks pass; failing CI leaves the PR open indefinitely.
+#
+# Provisioned 2026-04-18 as part of the v2.0.1 / Dependabot rollout
+# (Phase 5). See the playbook at
+# smartwatermelon/github-workflows/docs/plans/2026-04-18-v2-rollout-playbook.md
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Approve and enable auto-merge (patch/minor only)
+        if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash --delete-branch "$PR_URL"
