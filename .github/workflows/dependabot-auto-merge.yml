@@ -3,20 +3,26 @@ name: Dependabot Auto-Merge
 # Safely auto-merges Dependabot PRs after CI passes. Scope is narrow:
 #  - Only runs when github.actor == 'dependabot[bot]' (not spoofable;
 #    GitHub sets this from the authenticated user).
-#  - Only auto-merges patch + minor updates; major-version bumps are
-#    left open for manual review.
+#  - Patch/minor: always auto-merged.
+#  - Major: only auto-merged when EVERY listed dependency belongs to a
+#    trusted namespace (dependabot/, actions/, smartwatermelon/). One
+#    untrusted dep in a grouped update blocks the whole group.
 #  - Uses pull_request_target so the BASE-branch workflow runs, not
 #    the PR branch's — a PR modifying this file cannot bypass itself.
 #  - Never executes PR code; the only action taken is `gh pr merge
 #    --auto`, which is a GitHub-side API call.
+#  - Computes patch-vs-major from previous-version/new-version itself
+#    rather than trusting steps.metadata.outputs.update-type. On
+#    2026-04-28, fetch-metadata@v2 mislabeled a 2.0.1 -> 3.0.0
+#    reusable-workflow bump as semver-patch; trust math, not labels.
 #
 # `gh pr review --approve` satisfies branch-protection rules that
 # require review. `--auto` means the merge only happens after all
 # status checks pass; failing CI leaves the PR open indefinitely.
 #
-# Provisioned 2026-04-18 as part of the v2.0.1 / Dependabot rollout
-# (Phase 5). See the playbook at
-# smartwatermelon/github-workflows/docs/plans/2026-04-18-v2-rollout-playbook.md
+# Provisioned 2026-04-18 (v2.0.1 / Phase 5). Hardened 2026-04-28 with
+# the trusted-namespace allowlist + version-comparison defense. See
+# docs/plans/2026-04-28-dependabot-auto-merge-c2.md.
 
 on:
   pull_request_target:
@@ -35,8 +41,52 @@ jobs:
         id: metadata
         uses: dependabot/fetch-metadata@v2
 
-      - name: Approve and enable auto-merge (patch/minor only)
-        if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
+      - name: Decide if PR is auto-mergeable
+        id: policy
+        env:
+          PREV_VERSION: ${{ steps.metadata.outputs.previous-version }}
+          NEW_VERSION: ${{ steps.metadata.outputs.new-version }}
+          DEP_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+        run: |
+          set -euo pipefail
+          extract_major() {
+            printf '%s' "$1" | sed -E 's@^v?([0-9]+).*@\1@' | grep -E '^[0-9]+$' || echo ""
+          }
+          prev_major=$(extract_major "$PREV_VERSION")
+          new_major=$(extract_major "$NEW_VERSION")
+          if [ -z "$prev_major" ] || [ -z "$new_major" ]; then
+            echo "decision=skip" >> "$GITHUB_OUTPUT"
+            echo "::notice::Cannot parse versions ($PREV_VERSION -> $NEW_VERSION); leaving for manual review"
+            exit 0
+          fi
+          if [ "$prev_major" = "$new_major" ]; then
+            echo "decision=merge" >> "$GITHUB_OUTPUT"
+            echo "::notice::Patch/minor bump within major v$prev_major; auto-merging"
+            exit 0
+          fi
+          # Major bump path: fail closed if dependency-names is missing —
+          # we cannot apply the trusted-namespace allowlist without it.
+          if [ -z "${DEP_NAMES:-}" ]; then
+            echo "decision=skip" >> "$GITHUB_OUTPUT"
+            echo "::notice::Major bump v$prev_major -> v$new_major with empty dependency-names; leaving for manual review"
+            exit 0
+          fi
+          remainder=$(printf '%s' "$DEP_NAMES" \
+            | tr ',' '\n' \
+            | sed -E 's@^[[:space:]]+|[[:space:]]+$@@g' \
+            | grep -v '^$' \
+            | grep -vE '^(dependabot|actions|smartwatermelon)/' \
+            || true)
+          if [ -z "$remainder" ]; then
+            echo "decision=merge" >> "$GITHUB_OUTPUT"
+            echo "::notice::Major bump v$prev_major -> v$new_major in trusted namespace; auto-merging"
+          else
+            echo "decision=skip" >> "$GITHUB_OUTPUT"
+            echo "::notice::Major bump v$prev_major -> v$new_major; non-allowlisted deps present: $remainder"
+          fi
+
+      - name: Approve and enable auto-merge
+        if: steps.policy.outputs.decision == 'merge'
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
