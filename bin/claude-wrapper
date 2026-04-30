@@ -34,6 +34,9 @@ source "${WRAPPER_LIB}/binary-discovery.sh"
 # shellcheck source=../lib/pre-launch.sh
 source "${WRAPPER_LIB}/pre-launch.sh"
 
+# shellcheck source=../lib/proxy-health.sh
+source "${WRAPPER_LIB}/proxy-health.sh"
+
 # shellcheck source=../lib/remote-session.sh
 source "${WRAPPER_LIB}/remote-session.sh"
 
@@ -75,10 +78,15 @@ if secrets_available; then
       exit 1
     fi
   fi
+fi
 
+# Verify Headroom proxy (if ANTHROPIC_BASE_URL points at localhost) before exec.
+# Unsets the var on failure so the session falls back to direct Anthropic API.
+check_proxy_health
+
+if secrets_available; then
   debug_log "Executing: ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
-  exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
 else
   debug_log "Executing: ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
-  exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
 fi
+exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
