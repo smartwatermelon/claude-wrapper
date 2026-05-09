@@ -74,11 +74,22 @@ _load_gh_token() {
   fi
 
   local token
-  if command -v timeout &>/dev/null; then
-    token="$(timeout 5 op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
-  else
-    token="$(op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
-  fi
+  local -a backoff=(2 4 8)
+  local has_timeout=false
+  local wait_secs
+  command -v timeout &>/dev/null && has_timeout=true
+
+  for wait_secs in "${backoff[@]}"; do
+    if "${has_timeout}"; then
+      token="$(timeout "${wait_secs}" op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
+    else
+      token="$(op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
+    fi
+    if [[ -n "${token}" ]]; then
+      break
+    fi
+    debug_log "op read failed (timeout ${wait_secs}s)"
+  done
 
   if [[ -n "${token}" ]]; then
     export GH_TOKEN="${token}"
