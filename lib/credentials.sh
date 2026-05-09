@@ -76,6 +76,7 @@ _load_gh_token() {
   local token
   local -a backoff=(2 4 8)
   local has_timeout=false
+  local wait_secs
   command -v timeout &>/dev/null && has_timeout=true
 
   for wait_secs in "${backoff[@]}"; do
@@ -87,7 +88,7 @@ _load_gh_token() {
     if [[ -n "${token}" ]]; then
       break
     fi
-    debug_log "op read attempt timed out after ${wait_secs}s, retrying…"
+    debug_log "op read failed (timeout ${wait_secs}s)"
   done
 
   if [[ -n "${token}" ]]; then
