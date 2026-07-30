@@ -89,4 +89,8 @@ if secrets_available; then
 else
   debug_log "Executing: ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
 fi
-exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
+if [[ ${#RC_ARGS[@]} -gt 0 ]]; then
+  exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
+else
+  exec "${CLAUDE_BIN}" "$@"
+fi
