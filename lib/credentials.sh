@@ -18,6 +18,12 @@ readonly _CREDENTIALS_SH_LOADED=1
 readonly _CREDS_KEYCHAIN_SERVICE="op-service-account-claude-automation"
 readonly _CREDS_GH_TOKEN_REF="op://Automation/GitHub - CCCLI/Token"
 
+# Computed once so both credential-fetch functions below don't each re-run
+# `command -v timeout` on every invocation.
+_CREDS_HAS_TIMEOUT=false
+command -v timeout &>/dev/null && _CREDS_HAS_TIMEOUT=true
+readonly _CREDS_HAS_TIMEOUT
+
 # =========================================================
 # SERVICE ACCOUNT TOKEN
 # =========================================================
@@ -30,8 +36,13 @@ _load_service_account_token() {
     return 0
   fi
 
+  if ! command -v security &>/dev/null; then
+    debug_log "security command not available (non-macOS), skipping Keychain lookup"
+    return 0
+  fi
+
   local token
-  if command -v timeout &>/dev/null; then
+  if "${_CREDS_HAS_TIMEOUT}"; then
     token="$(timeout 3 security find-generic-password \
       -a "$(id -un)" \
       -s "${_CREDS_KEYCHAIN_SERVICE}" \
@@ -75,12 +86,10 @@ _load_gh_token() {
 
   local token
   local -a backoff=(2 4 8)
-  local has_timeout=false
   local wait_secs
-  command -v timeout &>/dev/null && has_timeout=true
 
   for wait_secs in "${backoff[@]}"; do
-    if "${has_timeout}"; then
+    if "${_CREDS_HAS_TIMEOUT}"; then
       token="$(timeout "${wait_secs}" op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
     else
       token="$(op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
