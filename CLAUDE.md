@@ -41,15 +41,16 @@ Enables verbose `DEBUG:` output to stderr from all modules.
 The wrapper is a single orchestrator that sources modules in dependency order, then `exec`s the real binary:
 
 1. **Resolve own path** — `realpath` to handle symlinks
-2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `proxy-health.sh` → `remote-session.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
-3. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
-4. **Validate binary** — ownership and permission checks on the discovered binary
-5. **Initialize secrets loader** — `init_secrets_loader` discovers per-project secrets files and authenticates if needed
-6. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
-7. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
-8. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
-9. **Check proxy health** — `check_proxy_health` verifies the Headroom proxy when `ANTHROPIC_BASE_URL` points at localhost, unsetting it on failure so the session falls back to the direct Anthropic API
-10. **`exec`** — replaces the wrapper process with the real binary, applying the remote-control args from step 6
+2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `launch-dir-check.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `proxy-health.sh` → `remote-session.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
+3. **Check launch directory** — `check_launch_dir` warns (non-blocking) if CWD is exactly `$HOME` or `$HOME/Developer`, since neither is a git repo and both carry an unrelated accumulated MCP server surface in `~/.claude/.claude.json`
+4. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
+5. **Validate binary** — ownership and permission checks on the discovered binary
+6. **Initialize secrets loader** — `init_secrets_loader` discovers per-project secrets files and authenticates if needed
+7. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
+8. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
+9. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
+10. **Check proxy health** — `check_proxy_health` verifies the Headroom proxy when `ANTHROPIC_BASE_URL` points at localhost, unsetting it on failure so the session falls back to the direct Anthropic API
+11. **`exec`** — replaces the wrapper process with the real binary, applying the remote-control args from step 7
 
 ### Module dependency chain
 
@@ -57,6 +58,7 @@ Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` 
 
 - **`credentials.sh`** — fetches `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain (service `op-service-account-claude-automation`) and `GH_TOKEN` from `op://Automation/GitHub - CCCLI/Token` via that service account, retrying `op read` with exponential backoff. Runs automatically as a side effect of being sourced (not invoked as a discrete step later in the flow). Both values are scoped to the wrapper process lifetime — they are not present in the interactive shell environment. Falls back to a keyring/no-op if the Keychain lookup or `op read` fails, logging a warning rather than aborting. Must be sourced before `secrets-loader.sh`, which depends on `OP_SERVICE_ACCOUNT_TOKEN`.
 - **`secrets-loader.sh`** — discovers secrets files at two levels (project `.claude/secrets.op`, local `.claude/secrets.local.op`), validates permissions/paths, runs `op inject` to resolve `op://Automation/...` references against the Automation vault via service account. Invoked explicitly as `init_secrets_loader` and `inject_secrets` (see execution flow above).
+- **`launch-dir-check.sh`** — `check_launch_dir` warns to stderr (never blocks) when CWD is exactly `$HOME` or `$HOME/Developer` — not subdirectories, which are legitimate git repos — since per-project secrets/pre-launch hooks are skipped there and an unrelated MCP server surface from `~/.claude/.claude.json` loads instead; recommends `--add-dir` for multi-repo work
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
 - **`remote-session.sh`** — derives a session name from the git repo basename, injects `--remote-control` for interactive sessions only
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks

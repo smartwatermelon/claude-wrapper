@@ -19,6 +19,9 @@ source "${WRAPPER_LIB}/permissions.sh"
 # shellcheck source=../lib/path-security.sh
 source "${WRAPPER_LIB}/path-security.sh"
 
+# shellcheck source=../lib/launch-dir-check.sh
+source "${WRAPPER_LIB}/launch-dir-check.sh"
+
 # shellcheck source=../lib/git-identity.sh
 source "${WRAPPER_LIB}/git-identity.sh"
 
@@ -39,6 +42,9 @@ source "${WRAPPER_LIB}/proxy-health.sh"
 
 # shellcheck source=../lib/remote-session.sh
 source "${WRAPPER_LIB}/remote-session.sh"
+
+# Warn (non-blocking) if launched from $HOME or $HOME/Developer exactly
+check_launch_dir
 
 # Find and validate the real claude binary
 CLAUDE_BIN=""
