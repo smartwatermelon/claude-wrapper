@@ -517,8 +517,12 @@ test_credentials_no_timeout_behavior() {
   fi
 
   # Build a stub PATH: a fake `op` that always fails (and records how many
-  # times it was invoked), and no `timeout` binary at all — this exercises
-  # the has_timeout=false branch of _load_gh_token (issues #50, #51).
+  # times it was invoked), and NO `timeout` binary — this exercises the
+  # has_timeout=false branch of _load_gh_token (issues #50, #51). We must
+  # not rely on the real `timeout` being absent from system dirs (it's
+  # present at /usr/bin/timeout on Linux, unlike macOS), so the stub dir
+  # is used as the *entire* PATH and provides every binary credentials.sh
+  # and this test need — `command -v timeout` then genuinely finds nothing.
   local stub_dir call_log
   stub_dir="$(mktemp -d)"
   call_log="${stub_dir}/op-calls.log"
@@ -529,9 +533,21 @@ exit 1
 EOF
   chmod +x "${stub_dir}/op"
 
+  # Symlink in the real coreutils needed to actually run this: `env` and
+  # `bash` (the `op` stub's own #!/usr/bin/env bash shebang needs both),
+  # `id`/`cat` (credentials.sh/logging.sh), and `security` (macOS Keychain
+  # lookup, short-circuited here since OP_SERVICE_ACCOUNT_TOKEN is
+  # pre-set) — everything except `timeout`, which must be genuinely
+  # missing for this test to be valid.
+  local bin real_bin
+  for bin in env bash id security cat; do
+    real_bin="$(command -v "${bin}" 2>/dev/null || true)"
+    [[ -n "${real_bin}" ]] && ln -s "${real_bin}" "${stub_dir}/${bin}"
+  done
+
   local debug_output
   debug_output="$(
-    PATH="${stub_dir}:/usr/bin:/bin" \
+    PATH="${stub_dir}" \
       OP_SERVICE_ACCOUNT_TOKEN="dummy-token-for-test" \
       CLAUDE_DEBUG=true \
       bash -c "unset GH_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
