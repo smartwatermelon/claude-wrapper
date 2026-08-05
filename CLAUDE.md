@@ -41,24 +41,28 @@ Enables verbose `DEBUG:` output to stderr from all modules.
 The wrapper is a single orchestrator that sources modules in dependency order, then `exec`s the real binary:
 
 1. **Resolve own path** — `realpath` to handle symlinks
-2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `git-identity.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh`
+2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `proxy-health.sh` → `remote-session.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
 3. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
 4. **Validate binary** — ownership and permission checks on the discovered binary
-5. **Load pre-launch hook** — runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
-6. **Inject 1Password secrets** — `op inject` resolves `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` from the shell environment (no TouchID prompt)
-7. **Inject remote-control args** — adds `--remote-control <session-name>` for interactive sessions
-8. **`exec`** — replaces the wrapper process with the real binary
+5. **Initialize secrets loader** — `init_secrets_loader` discovers per-project secrets files and authenticates if needed
+6. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
+7. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
+8. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
+9. **Check proxy health** — `check_proxy_health` verifies the Headroom proxy when `ANTHROPIC_BASE_URL` points at localhost, unsetting it on failure so the session falls back to the direct Anthropic API
+10. **`exec`** — replaces the wrapper process with the real binary, applying the remote-control args from step 6
 
 ### Module dependency chain
 
 Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` and `path-security.sh` are foundational — other modules call their functions.
 
-- **`secrets-loader.sh`** — discovers secrets files at two levels (project `.claude/secrets.op`, local `.claude/secrets.local.op`), validates permissions/paths, runs `op inject` to resolve `op://Automation/...` references against the Automation vault via service account
+- **`credentials.sh`** — fetches `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain (service `op-service-account-claude-automation`) and `GH_TOKEN` from `op://Automation/GitHub - CCCLI/Token` via that service account, retrying `op read` with exponential backoff. Runs automatically as a side effect of being sourced (not invoked as a discrete step later in the flow). Both values are scoped to the wrapper process lifetime — they are not present in the interactive shell environment. Falls back to a keyring/no-op if the Keychain lookup or `op read` fails, logging a warning rather than aborting. Must be sourced before `secrets-loader.sh`, which depends on `OP_SERVICE_ACCOUNT_TOKEN`.
+- **`secrets-loader.sh`** — discovers secrets files at two levels (project `.claude/secrets.op`, local `.claude/secrets.local.op`), validates permissions/paths, runs `op inject` to resolve `op://Automation/...` references against the Automation vault via service account. Invoked explicitly as `init_secrets_loader` and `inject_secrets` (see execution flow above).
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
 - **`remote-session.sh`** — derives a session name from the git repo basename, injects `--remote-control` for interactive sessions only
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks
+- **`proxy-health.sh`** — verifies the Headroom proxy (when `ANTHROPIC_BASE_URL` points at localhost) before exec, unsetting the variable on failure so the session falls back to the direct Anthropic API
 
-`GH_TOKEN` is injected at shell startup via `~/.config/bash/1password.sh` (Automation vault, service account) — not by the wrapper.
+`GH_TOKEN` is fetched by `credentials.sh` at wrapper launch (`op://Automation/GitHub - CCCLI/Token`, via the service account token loaded from Keychain), scoped to the wrapper process only — it is not exported into the interactive shell environment. This supersedes the previous flat-file `github-token.sh` module, which no longer exists in this repo.
 
 ### Security model
 
@@ -71,11 +75,11 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 | `.claude/secrets.op` | Per-project 1Password secrets (committed); references `op://Automation/...` |
 | `.claude/secrets.local.op` | Per-project local overrides (gitignored) |
 
-`GH_TOKEN` is sourced from `op://Automation/GitHub - CCCLI/Token` at shell startup by `~/.config/bash/1password.sh`, not by the wrapper.
+`GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from `op://Automation/GitHub - CCCLI/Token` — not from a flat file, and not sourced by shell startup.
 
 ## Headroom Learned Patterns
 
-*Auto-generated by `headroom learn` on 2026-04-07 — do not edit manually*
+*Auto-generated by `headroom learn` on 2026-04-07 — prefer running `headroom learn` to refresh this section, but manual edits are fine when accuracy requires it*
 
 ### File Paths & Sizes
 
@@ -83,7 +87,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 - Key lib files: `lib/secrets-loader.sh`, `lib/pre-launch.sh`, `lib/remote-session.sh`
 - Per-project secrets: `.claude/secrets.op` (committed), `.claude/secrets.local.op` (gitignored)
-- Client repos live at `/Users/andrewrich/Developer/clients/` (not `client/` — singular form causes file_not_found errors)
+- Use the plural `clients/` directory name for client repos, not singular `client/` — the singular form causes file_not_found errors
 - `tests/test-wrapper.sh` exceeds the 10,000-token read limit (~10,746 tokens); always use `offset` and `limit` params or `grep` to read specific portions
 - `lib/secrets-loader.sh` is large (~13,000-15,000 tokens); read with offset/limit when possible
 
@@ -99,7 +103,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 *~500 tokens/session saved*
 
-- `GH_TOKEN` is injected at shell startup from `op://Automation/GitHub - CCCLI/Token` via `~/.config/bash/1password.sh`; no flat token files exist
+- `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from `op://Automation/GitHub - CCCLI/Token`; no flat token files exist
 - Per-project secrets live in `.claude/secrets.op` (committed) referencing `op://Automation/...`; resolved by `secrets-loader.sh` via `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID)
 - The global `~/.config/claude-code/secrets.op` no longer exists
 - `opp <args>` runs `op` as your personal account (unsets service account token for that subprocess); needed for Personal vault access (e.g. prep-airdrop.sh)
@@ -134,7 +138,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 *~400 tokens/session saved*
 
 - Branch naming convention: `claude/<description>-$(date +%s | tail -c5)` or `claude/<description>`
-- Always use `git -C /Users/andrewrich/Developer/claude-wrapper <cmd>` rather than `cd && git`
+- Always use `git -C <repo-path> <cmd>` rather than `cd && git`
 - After squash-merge, deleted remote branches still require `git branch -D` (not `-d`) locally because squash commits don't share history
 
 ### CI / Post-Push Loop
