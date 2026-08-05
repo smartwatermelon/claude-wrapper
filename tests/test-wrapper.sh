@@ -505,6 +505,47 @@ test_git_identity_behavior() {
   assert_contains "@" "${author_email}" "GIT_AUTHOR_EMAIL contains @ symbol"
 }
 
+test_credentials_no_timeout_behavior() {
+  echo ""
+  echo "Test 3.6: GH_TOKEN fetch skips retries when timeout is unavailable"
+
+  if [[ ! -f "${LIB_DIR}/credentials.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - credentials.sh does not exist"
+    return 0
+  fi
+
+  # Build a stub PATH: a fake `op` that always fails (and records how many
+  # times it was invoked), and no `timeout` binary at all — this exercises
+  # the has_timeout=false branch of _load_gh_token (issues #50, #51).
+  local stub_dir call_log
+  stub_dir="$(mktemp -d)"
+  call_log="${stub_dir}/op-calls.log"
+  cat >"${stub_dir}/op" <<EOF
+#!/usr/bin/env bash
+echo "call" >>"${call_log}"
+exit 1
+EOF
+  chmod +x "${stub_dir}/op"
+
+  local debug_output
+  debug_output="$(
+    PATH="${stub_dir}:/usr/bin:/bin" \
+      OP_SERVICE_ACCOUNT_TOKEN="dummy-token-for-test" \
+      CLAUDE_DEBUG=true \
+      bash -c "unset GH_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
+  )"
+
+  local call_count=0
+  [[ -f "${call_log}" ]] && call_count="$(wc -l <"${call_log}" | tr -d ' ')"
+
+  assert_equals "1" "${call_count}" "op read attempted exactly once (no retry loop without timeout)"
+  assert_contains "op read failed (no timeout available)" "${debug_output}" "Debug message reflects missing timeout, not a false timeout duration"
+
+  rm -rf "${stub_dir}"
+}
+
 # =============================================================================
 # SECTION 4: Integration Tests - Full wrapper behavior
 # =============================================================================
@@ -701,6 +742,7 @@ main() {
   test_permissions_autofix_behavior
   test_path_security_behavior
   test_git_identity_behavior
+  test_credentials_no_timeout_behavior
 
   # Section 4: Integration Tests
   echo ""
