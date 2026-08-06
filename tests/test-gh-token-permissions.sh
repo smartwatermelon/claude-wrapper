@@ -270,7 +270,7 @@ if [[ -n "${WORK_DIR:-}" ]] && [[ -d "${WORK_DIR}/repo" ]]; then
 fi
 
 # =============================================================================
-# SECTION 3: Denied Operations
+# SECTION 3: Permission Boundaries (repo scope)
 # =============================================================================
 # A classic PAT's `repo` scope is coarse: it grants read AND write on repo
 # settings, branch protection, collaborators, deploy keys, and webhooks —
@@ -291,7 +291,7 @@ fi
 # explicitly deleted after creation) — a bad revert can leave real repo
 # state altered, which is exactly what happened during this fix's
 # investigation before TEST_REPO was repointed.
-section "3. Denied Operations"
+section "3. Permission Boundaries (repo scope)"
 
 echo -e "${BOLD}Repo-scope write operations (expected to SUCCEED — not deniable for a classic PAT):${NC}"
 skip "Branch protection write: 'repo' scope permits this for classic PATs (verified live against sandbox)"
