@@ -88,17 +88,25 @@ _load_gh_token() {
   local -a backoff=(2 4 8)
   local wait_secs
 
-  for wait_secs in "${backoff[@]}"; do
-    if "${_CREDS_HAS_TIMEOUT}"; then
+  if "${_CREDS_HAS_TIMEOUT}"; then
+    for wait_secs in "${backoff[@]}"; do
       token="$(timeout "${wait_secs}" op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
-    else
-      token="$(op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
+      if [[ -n "${token}" ]]; then
+        break
+      fi
+      debug_log "op read failed (timeout ${wait_secs}s)"
+    done
+  else
+    # No timeout command available to bound each attempt, so retrying would
+    # only multiply the hang risk (an unbounded op read blocks forever on
+    # the first try, making retries unreachable) with no upside. Attempt
+    # exactly once instead of the usual backoff loop.
+    debug_log "timeout command unavailable, skipping retries (single attempt only)"
+    token="$(op read "${_CREDS_GH_TOKEN_REF}" 2>/dev/null || true)"
+    if [[ -z "${token}" ]]; then
+      debug_log "op read failed (no timeout available)"
     fi
-    if [[ -n "${token}" ]]; then
-      break
-    fi
-    debug_log "op read failed (timeout ${wait_secs}s)"
-  done
+  fi
 
   if [[ -n "${token}" ]]; then
     export GH_TOKEN="${token}"
