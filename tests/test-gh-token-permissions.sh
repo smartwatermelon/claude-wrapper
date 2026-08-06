@@ -282,12 +282,15 @@ fi
 # deletion (`delete_repo`), so that's the only real boundary left to assert
 # here.
 #
-# These checks intentionally run against TEST_REPO, which MUST be a
-# disposable sandbox (see the TEST_REPO comment above) — several of them are
-# live mutations, and unlike section 3.3 they are not reliably revertible
-# (e.g. a webhook or deploy key ID must be captured and explicitly deleted
-# after creation; a bad revert can leave real repo state altered). Do not
-# point TEST_REPO at a repo you care about.
+# The five checks above are documented SKIPs, not live requests — they no
+# longer run anything. Only the repo-delete check below fires a real (safe,
+# scope-guaranteed) request. If you're re-adding a live check for any of the
+# skipped operations, remember: TEST_REPO MUST stay a disposable sandbox
+# (see the TEST_REPO comment above), and several of those operations are not
+# reliably revertible (e.g. a webhook or deploy key ID must be captured and
+# explicitly deleted after creation) — a bad revert can leave real repo
+# state altered, which is exactly what happened during this fix's
+# investigation before TEST_REPO was repointed.
 section "3. Denied Operations"
 
 echo -e "${BOLD}Repo-scope write operations (expected to SUCCEED — not deniable for a classic PAT):${NC}"
@@ -330,18 +333,27 @@ if [[ -n "${TEST_PR_NUMBER}" ]]; then
   # sandbox verification: the local wrapper rejected the call with its own
   # --squash/--delete-branch policy error before it ever reached GitHub).
   real_gh="$(type -a gh 2>/dev/null | grep -oE '/[^ ]+/gh$' | grep -v '/\.local/bin/gh$' | head -1)"
-  real_gh="${real_gh:-gh}" # fall back to PATH lookup if no alternate binary is found
-  merge_result="$("${real_gh}" pr merge "${TEST_PR_NUMBER}" --repo "${TEST_REPO}" --merge 2>&1)" || true
 
-  if echo "${merge_result}" | grep -qi "review\|approved\|not allowed\|required.*review\|CODEOWNERS\|merging.*blocked\|not mergeable\|policy prohibits"; then
-    pass "BLOCKED: Merge rejected — review required (branch protection working)"
-    echo -e "       ${CYAN}Server response: ${merge_result:0:120}${NC}"
-  elif echo "${merge_result}" | grep -qi "403\|not accessible"; then
-    pass "BLOCKED: Merge rejected by token permissions"
-  elif echo "${merge_result}" | grep -qi "merged\|Merged"; then
-    fail "CRITICAL: PR was merged without review! Branch protection is NOT working!"
+  if [[ -z "${real_gh}" ]]; then
+    # No non-wrapper gh binary found — falling back to bare `gh` would
+    # silently re-invoke the wrapper and produce its policy-rejection
+    # message instead of GitHub's, which looks identical to a passing test
+    # but verifies nothing. Fail loudly instead so this doesn't mask a
+    # broken branch-protection check.
+    fail "Cannot find a real (non-wrapper) gh binary in PATH — install Homebrew gh or check 'type -a gh'"
   else
-    fail "Unexpected merge response: ${merge_result:0:200}"
+    merge_result="$("${real_gh}" pr merge "${TEST_PR_NUMBER}" --repo "${TEST_REPO}" --merge 2>&1)" || true
+
+    if echo "${merge_result}" | grep -qi "review\|approved\|not allowed\|required.*review\|CODEOWNERS\|merging.*blocked\|not mergeable\|policy prohibits"; then
+      pass "BLOCKED: Merge rejected — review required (branch protection working)"
+      echo -e "       ${CYAN}Server response: ${merge_result:0:120}${NC}"
+    elif echo "${merge_result}" | grep -qi "403\|not accessible"; then
+      pass "BLOCKED: Merge rejected by token permissions"
+    elif echo "${merge_result}" | grep -qi "merged\|Merged"; then
+      fail "CRITICAL: PR was merged without review! Branch protection is NOT working!"
+    else
+      fail "Unexpected merge response: ${merge_result:0:200}"
+    fi
   fi
 else
   skip "No test PR was created — cannot test merge protection"
