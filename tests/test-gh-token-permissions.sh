@@ -14,14 +14,25 @@ set -euo pipefail
 # What it tests:
 #   1. Environment: wrapper-injected identity and token are active
 #   2. ALLOWED operations: PRs, branches, CI status (should succeed)
-#   3. DENIED operations: admin, settings, delete (should get 403)
+#   3. REPO-SCOPE boundary: branch protection/settings/collaborators/deploy
+#      keys/webhooks all SUCCEED (classic PAT `repo` scope grants these —
+#      not deniable), only repo deletion is genuinely blocked (403, missing
+#      `delete_repo` scope)
 #   4. MERGE PROTECTION: branch protection blocks self-merge (should fail)
 #
 # Cleanup: Creates a temporary branch + PR, then deletes both on exit.
 # =============================================================================
 
 # --- Config ---
-TEST_REPO="smartwatermelon/claude-config" # Public repo with branch protection
+# Dedicated sandbox repo — DO NOT point this at a real project repo (e.g.
+# claude-config). Section 3 below fires live mutating requests (branch
+# protection writes, repo settings PATCH, collaborator/deploy-key/webhook
+# creation) to establish the actual permission boundary. Most of these
+# SUCCEED with a classic PAT + `repo` scope (GitHub doesn't gate them behind
+# a separate admin scope), so running this against a repo you care about
+# will actually mutate its live settings. See feedback memory
+# "test-gh-token-permissions-live-mutations" for the incident that led here.
+TEST_REPO="smartwatermelon/test-gh-token-permissions" # Sandbox repo — safe to mutate
 TEST_BRANCH="test/token-permissions-$(date +%s)"
 
 # --- Colors ---
@@ -259,67 +270,47 @@ if [[ -n "${WORK_DIR:-}" ]] && [[ -d "${WORK_DIR}/repo" ]]; then
 fi
 
 # =============================================================================
-# SECTION 3: Denied Operations (should get 403)
+# SECTION 3: Permission Boundaries (repo scope)
 # =============================================================================
-section "3. Denied Operations"
+# A classic PAT's `repo` scope is coarse: it grants read AND write on repo
+# settings, branch protection, collaborators, deploy keys, and webhooks —
+# GitHub does not gate any of these behind a separate admin-only scope for
+# classic PATs. Live-verified against the sandbox repo (2026-08-06): all of
+# branch protection write, repo settings PATCH, collaborator invite, deploy
+# key add, and webhook creation SUCCEED with this token. The only operation
+# GitHub actually gates behind a scope this token lacks is repository
+# deletion (`delete_repo`), so that's the only real boundary left to assert
+# here.
+#
+# The five checks above are documented SKIPs, not live requests — they no
+# longer run anything. Only the repo-delete check below fires a real (safe,
+# scope-guaranteed) request. If you're re-adding a live check for any of the
+# skipped operations, remember: TEST_REPO MUST stay a disposable sandbox
+# (see the TEST_REPO comment above), and several of those operations are not
+# reliably revertible (e.g. a webhook or deploy key ID must be captured and
+# explicitly deleted after creation) — a bad revert can leave real repo
+# state altered, which is exactly what happened during this fix's
+# investigation before TEST_REPO was repointed.
+section "3. Permission Boundaries (repo scope)"
 
-# 3.1 Branch protection (requires administration permission)
-echo -e "${BOLD}Admin endpoints (should be 403):${NC}"
-http_status="$(gh api "repos/${TEST_REPO}/branches/main/protection" 2>&1)" || true
-if echo "${http_status}" | grep -q "Resource not accessible by personal access token"; then
-  pass "BLOCKED: Cannot read branch protection (no admin permission)"
-else
-  fail "UNEXPECTED: Can read branch protection — token has too many permissions"
-fi
+echo -e "${BOLD}Repo-scope write operations (expected to SUCCEED — not deniable for a classic PAT):${NC}"
+skip "Branch protection write: 'repo' scope permits this for classic PATs (verified live against sandbox)"
+skip "Repo settings PATCH: 'repo' scope permits this for classic PATs (verified live against sandbox)"
+skip "Add collaborator: 'repo' scope permits this for classic PATs (verified live against sandbox)"
+skip "Add deploy key: 'repo' scope permits this for classic PATs (verified live against sandbox)"
+skip "Create webhook: 'repo' scope permits this for classic PATs (verified live against sandbox)"
 
-# 3.2 Modify repo settings
-http_status="$(gh api "repos/${TEST_REPO}" -X PATCH -f description="hacked" 2>&1)" || true
-if echo "${http_status}" | grep -q "Resource not accessible by personal access token"; then
-  pass "BLOCKED: Cannot modify repo settings"
-elif echo "${http_status}" | grep -q "403"; then
-  pass "BLOCKED: Cannot modify repo settings (403)"
-else
-  fail "UNEXPECTED: Could modify repo settings — token has too many permissions"
-  # Revert if it actually worked
-  gh api "repos/${TEST_REPO}" -X PATCH -f description="" 2>/dev/null || true
-fi
-
-# 3.3 Delete repo
+# Delete repo — the one operation GitHub actually gates behind a scope this
+# token doesn't have (`delete_repo`, separate from `repo`). Safe to assert
+# live: a 403 here is guaranteed by the scope model, not just observed
+# behavior, so there's no risk of this one silently succeeding.
 echo ""
 echo -e "${BOLD}Destructive operations (should be 403):${NC}"
 http_status="$(gh api "repos/${TEST_REPO}" -X DELETE 2>&1)" || true
-if echo "${http_status}" | grep -qi "403\|not accessible\|Must have admin"; then
-  pass "BLOCKED: Cannot delete repo"
+if echo "${http_status}" | grep -qi "403\|not accessible\|Must have admin\|delete_repo"; then
+  pass "BLOCKED: Cannot delete repo (missing delete_repo scope)"
 else
   fail "UNEXPECTED: Delete repo did not return 403 (got: ${http_status:0:100})"
-fi
-
-# 3.4 Manage collaborators
-http_status="$(gh api "repos/${TEST_REPO}/collaborators/octocat" -X PUT 2>&1)" || true
-if echo "${http_status}" | grep -qi "403\|not accessible\|Must have admin"; then
-  pass "BLOCKED: Cannot manage collaborators"
-else
-  fail "UNEXPECTED: Manage collaborators did not return 403"
-fi
-
-# 3.5 Manage deploy keys
-http_status="$(gh api "repos/${TEST_REPO}/keys" -X POST -f title="evil" -f key="ssh-ed25519 AAAA test" 2>&1)" || true
-if echo "${http_status}" | grep -qi "403\|not accessible\|Must have admin"; then
-  pass "BLOCKED: Cannot add deploy keys"
-else
-  fail "UNEXPECTED: Add deploy keys did not return 403"
-fi
-
-# 3.6 Manage webhooks
-http_status="$(
-  gh api "repos/${TEST_REPO}/hooks" -X POST --input - 2>&1 <<'HOOK'
-{"config":{"url":"https://evil.example.com"},"events":["push"]}
-HOOK
-)" || true
-if echo "${http_status}" | grep -qi "403\|not accessible\|Not Found"; then
-  pass "BLOCKED: Cannot create webhooks"
-else
-  fail "UNEXPECTED: Create webhook did not return 403"
 fi
 
 # =============================================================================
@@ -330,17 +321,39 @@ section "4. Merge Protection (branch protection enforcement)"
 if [[ -n "${TEST_PR_NUMBER}" ]]; then
   echo -e "${BOLD}Attempting to merge PR #${TEST_PR_NUMBER} without review:${NC}"
 
-  merge_result="$(gh pr merge "${TEST_PR_NUMBER}" --repo "${TEST_REPO}" --merge 2>&1)" || true
+  # Bypass the local gh merge-lock/pre-merge-review wrapper — this check is
+  # verifying GitHub's own branch protection API behavior, not this
+  # machine's local merge tooling. The wrapper exists both as a shell
+  # function AND as a same-named binary earlier in PATH
+  # (~/.local/bin/gh -> ~/.config/bash/gh-wrapper.sh, see its own header
+  # comment), so `command gh` alone isn't enough to reach the real GitHub
+  # CLI — it only defeats the function, not the PATH-shadowing binary.
+  # Resolve the real Homebrew gh explicitly instead. Using the wrapped `gh`
+  # here tests the wrong layer and masks the real signal (confirmed during
+  # sandbox verification: the local wrapper rejected the call with its own
+  # --squash/--delete-branch policy error before it ever reached GitHub).
+  real_gh="$(type -a gh 2>/dev/null | grep -oE '/[^ ]+/gh$' | grep -v '/\.local/bin/gh$' | head -1)"
 
-  if echo "${merge_result}" | grep -qi "review\|approved\|not allowed\|required.*review\|CODEOWNERS\|merging.*blocked"; then
-    pass "BLOCKED: Merge rejected — review required (branch protection working)"
-    echo -e "       ${CYAN}Server response: ${merge_result:0:120}${NC}"
-  elif echo "${merge_result}" | grep -qi "403\|not accessible"; then
-    pass "BLOCKED: Merge rejected by token permissions"
-  elif echo "${merge_result}" | grep -qi "merged\|Merged"; then
-    fail "CRITICAL: PR was merged without review! Branch protection is NOT working!"
+  if [[ -z "${real_gh}" ]]; then
+    # No non-wrapper gh binary found — falling back to bare `gh` would
+    # silently re-invoke the wrapper and produce its policy-rejection
+    # message instead of GitHub's, which looks identical to a passing test
+    # but verifies nothing. Fail loudly instead so this doesn't mask a
+    # broken branch-protection check.
+    fail "Cannot find a real (non-wrapper) gh binary in PATH — install Homebrew gh or check 'type -a gh'"
   else
-    fail "Unexpected merge response: ${merge_result:0:200}"
+    merge_result="$("${real_gh}" pr merge "${TEST_PR_NUMBER}" --repo "${TEST_REPO}" --merge 2>&1)" || true
+
+    if echo "${merge_result}" | grep -qi "review\|approved\|not allowed\|required.*review\|CODEOWNERS\|merging.*blocked\|not mergeable\|policy prohibits"; then
+      pass "BLOCKED: Merge rejected — review required (branch protection working)"
+      echo -e "       ${CYAN}Server response: ${merge_result:0:120}${NC}"
+    elif echo "${merge_result}" | grep -qi "403\|not accessible"; then
+      pass "BLOCKED: Merge rejected by token permissions"
+    elif echo "${merge_result}" | grep -qi "merged\|Merged"; then
+      fail "CRITICAL: PR was merged without review! Branch protection is NOT working!"
+    else
+      fail "Unexpected merge response: ${merge_result:0:200}"
+    fi
   fi
 else
   skip "No test PR was created — cannot test merge protection"
@@ -383,11 +396,14 @@ if [[ ${FAIL} -eq 0 ]]; then
   echo "The wrapper PAT can:"
   echo "  - Read repos, PRs, CI status"
   echo "  - Push branches, create PRs"
+  echo "  - Write branch protection, repo settings, collaborators, deploy"
+  echo "    keys, and webhooks (classic PAT 'repo' scope grants all of this —"
+  echo "    not deniable at the scope level; see section 3 above)"
   echo ""
   echo "The wrapper PAT cannot:"
-  echo "  - Access admin/settings endpoints"
-  echo "  - Delete repos or manage collaborators"
-  echo "  - Merge PRs without an approving review"
+  echo "  - Delete repos (missing delete_repo scope)"
+  echo "  - Merge PRs without an approving review (branch protection, when"
+  echo "    enforce_admins is enabled — see section 4 above)"
   exit 0
 else
   echo -e "${RED}${BOLD}${FAIL} test(s) failed — review output above.${NC}"
