@@ -523,8 +523,13 @@ test_credentials_no_timeout_behavior() {
   # present at /usr/bin/timeout on Linux, unlike macOS), so the stub dir
   # is used as the *entire* PATH and provides every binary credentials.sh
   # and this test need — `command -v timeout` then genuinely finds nothing.
+  #
+  # Nested under TEST_TMP (not a standalone mktemp -d) so the script-level
+  # cleanup_test_env EXIT trap sweeps it even if this function fails
+  # partway through under set -euo pipefail — see issue #70.
   local stub_dir call_log
-  stub_dir="$(mktemp -d)"
+  stub_dir="${TEST_TMP}/credentials-no-timeout-stub"
+  mkdir -p "${stub_dir}"
   call_log="${stub_dir}/op-calls.log"
   cat >"${stub_dir}/op" <<EOF
 #!/usr/bin/env bash
@@ -558,8 +563,6 @@ EOF
 
   assert_equals "1" "${call_count}" "op read attempted exactly once (no retry loop without timeout)"
   assert_contains "op read failed (no timeout available)" "${debug_output}" "Debug message reflects missing timeout, not a false timeout duration"
-
-  rm -rf "${stub_dir}"
 }
 
 # =============================================================================
