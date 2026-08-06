@@ -21,7 +21,7 @@ name: Dependabot Auto-Merge
 #
 # Provisioned 2026-04-18 (v2.0.1 / Phase 5). Hardened 2026-04-28 with
 # the trusted-namespace allowlist + version-comparison defense. See
-# docs/plans/2026-04-28-dependabot-auto-merge-c2.md.
+# smartwatermelon/claude-config/docs/plans/2026-04-28-dependabot-auto-merge-c2.md.
 
 on: # zizmor: ignore[dangerous-triggers] intentional: dependabot-only via corrected actor check, minimal permissions, no PR code execution
   pull_request_target:

@@ -154,19 +154,20 @@ DEBUG_MODE=true
 
 ### GitHub Token Integration
 
-`GH_TOKEN` is injected into your shell environment at startup — not by the
-wrapper. The recommended setup resolves the token from the 1Password
-Automation vault via a service account:
+`GH_TOKEN` is fetched by the wrapper itself at launch, via `lib/credentials.sh`.
+It reads `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain, then resolves the
+token from the 1Password Automation vault:
 
 ```bash
-# ~/.config/bash/1password.sh (sourced by ~/.bashrc / ~/.zshrc)
-export GH_TOKEN="$(op read 'op://Automation/GitHub - CCCLI/Token')"
+op read 'op://Automation/GitHub - CCCLI/Token'
 ```
 
-When you rotate the token in 1Password, new shells pick it up automatically.
-The wrapper does not load flat token files and does not perform per-org
-routing — if you need multiple tokens for different owners, manage them
-yourself (e.g., direnv, per-project `.envrc`).
+If `GH_TOKEN` is already set in your shell environment, the wrapper leaves it
+alone and skips the vault lookup — so a shell-startup export still works, but
+it's no longer required. When you rotate the token in 1Password, the next
+wrapper launch picks it up automatically. The wrapper does not load flat token
+files and does not perform per-org routing — if you need multiple tokens for
+different owners, manage them yourself (e.g., direnv, per-project `.envrc`).
 
 ### .gitignore Configuration
 
@@ -323,21 +324,21 @@ Output shows which files loaded in order. Last file wins for duplicate variables
 
 ### User-Controlled
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `CLAUDE_DEBUG` | `false` | Enable verbose logging |
-| `APP_ENV` | - | Environment selector for multi-env setups |
+| Variable       | Default | Purpose                                    |
+| -------------- | ------- | ------------------------------------------ |
+| `CLAUDE_DEBUG` | `false` | Enable verbose logging                     |
+| `APP_ENV`      | -       | Environment selector for multi-env setups  |
 
 ### Set by Wrapper
 
 | Variable | Value | Purpose |
-|----------|-------|---------|
+| ---------- | ------- | --------- |
 | `GIT_AUTHOR_NAME` | `Claude Code Bot` | Git commit author |
 | `GIT_AUTHOR_EMAIL` | `claude-code@smartwatermelon.github` | Git commit email |
 | `GIT_COMMITTER_NAME` | `Claude Code Bot` | Git committer |
 | `GIT_COMMITTER_EMAIL` | `claude-code@smartwatermelon.github` | Git committer email |
 | `GIT_SSH_COMMAND` | `ssh -i ~/.ssh/id_ed25519_claude_code ...` | SSH key for git |
-| `GH_TOKEN` | Inherited from shell env (set at shell startup, not by wrapper) | GitHub CLI token |
+| `GH_TOKEN` | Fetched by wrapper from 1Password Automation vault via `lib/credentials.sh` | GitHub CLI token |
 
 ### Loaded from secrets.op
 

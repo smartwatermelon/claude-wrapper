@@ -67,10 +67,11 @@ cat ~/.ssh/id_ed25519_claude_code.pub
 
 #### GitHub Token
 
-`GH_TOKEN` is expected to be set in your shell environment before the wrapper
-runs. The recommended setup uses a 1Password service account to resolve the
-token at shell startup (see `~/.config/bash/1password.sh`), but any mechanism
-that exports `GH_TOKEN` will work.
+The wrapper fetches `GH_TOKEN` itself at launch, via `lib/credentials.sh`. It
+reads `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain, then resolves
+`op://Automation/GitHub - CCCLI/Token` from the 1Password Automation vault.
+No shell-startup setup is required — if `GH_TOKEN` is already set in your
+environment, the wrapper leaves it alone and skips the vault lookup.
 
 The wrapper does not load flat token files or perform per-org token routing.
 
