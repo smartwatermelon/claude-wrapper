@@ -3,6 +3,7 @@ name: Claude Code
 permissions:
   contents: read
   pull-requests: read
+  issues: read
   id-token: write
 
 on:
