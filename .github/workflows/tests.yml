@@ -19,8 +19,12 @@ jobs:
       - name: Run test-credentials.sh
         run: bash tests/test-credentials.sh
 
-      - name: Run test-gh-token-permissions.sh
-        run: bash tests/test-gh-token-permissions.sh
+      # test-gh-token-permissions.sh is intentionally excluded: it's a
+      # human-in-the-loop integration test that must run from inside a live
+      # claude-wrapper session against a real sandbox repo with a live
+      # wrapper-issued GH_TOKEN. It guards on GIT_AUTHOR_NAME == "Claude
+      # Code Bot" and hard-exits on a vanilla runner, and it fires live
+      # mutating GitHub API requests unsuitable for unattended CI.
 
       - name: Run test-launch-dir-check.sh
         run: bash tests/test-launch-dir-check.sh
