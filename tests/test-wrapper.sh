@@ -20,6 +20,9 @@ REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 WRAPPER="${REPO_ROOT}/bin/claude-wrapper"
 LIB_DIR="${REPO_ROOT}/lib"
 
+# shellcheck source=lib/op-guard.sh
+source "${TEST_DIR}/lib/op-guard.sh"
+
 # Temporary test environment
 TEST_TMP=""
 
@@ -32,6 +35,9 @@ setup_test_env() {
 }
 
 cleanup_test_env() {
+  # Runs first so it still catches a clobbered system `op` even if a test
+  # failed partway through under set -euo pipefail — see issue #79.
+  op_guard_verify
   if [[ -n "${TEST_TMP:-}" ]] && [[ -d "${TEST_TMP}" ]]; then
     rm -rf "${TEST_TMP}"
   fi
@@ -39,6 +45,7 @@ cleanup_test_env() {
 
 # Trap cleanup on exit
 trap cleanup_test_env EXIT
+op_guard_snapshot
 
 # Test helpers
 # Note: Using ((var += 1)) instead of ((var++)) per CLAUDE.md guidelines
