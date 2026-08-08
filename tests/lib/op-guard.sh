@@ -49,6 +49,11 @@ op_guard_verify() {
   local post_size
   post_size="$(wc -c <"${_OP_GUARD_REAL_PATH}" 2>/dev/null | tr -d ' ')"
 
+  if [[ -z "${post_size}" ]]; then
+    echo "op-guard: FATAL - ${_OP_GUARD_REAL_PATH} exists but became unreadable during test run (see issue #79)" >&2
+    exit 1
+  fi
+
   if [[ "${post_size}" != "${_OP_GUARD_REAL_SIZE}" ]]; then
     echo "op-guard: FATAL - ${_OP_GUARD_REAL_PATH} changed size during test run (${_OP_GUARD_REAL_SIZE} -> ${post_size} bytes) - it may have been overwritten by a test stub (see issue #79)" >&2
     exit 1
