@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Run test-credentials.sh
+        run: bash tests/test-credentials.sh
+
+      # test-gh-token-permissions.sh is intentionally excluded: it's a
+      # human-in-the-loop integration test that must run from inside a live
+      # claude-wrapper session against a real sandbox repo with a live
+      # wrapper-issued GH_TOKEN. It guards on GIT_AUTHOR_NAME == "Claude
+      # Code Bot" and hard-exits on a vanilla runner, and it fires live
+      # mutating GitHub API requests unsuitable for unattended CI.
+
+      - name: Run test-launch-dir-check.sh
+        run: bash tests/test-launch-dir-check.sh
+
+      - name: Run test-remote-session.sh
+        run: bash tests/test-remote-session.sh
+
+      - name: Run test-wrapper.sh
+        run: bash tests/test-wrapper.sh
+
+      - name: ShellCheck
+        run: shellcheck --external-sources lib/*.sh bin/claude-wrapper tests/*.sh tests/lib/*.sh
