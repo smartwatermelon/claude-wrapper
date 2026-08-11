@@ -9,9 +9,18 @@
 # GNU stat -f prints multi-line filesystem info to stdout and can still
 # exit 0, so the fallback never triggers and garbage gets parsed as perms.
 # Explicit platform detection (one-shot `stat --version` probe) avoids that.
+#
+# The platform never changes during a process lifetime, so detect it once
+# at source time and cache the result, rather than re-probing on every call.
+if stat --version >/dev/null 2>&1; then
+  _STAT_IS_GNU=true
+else
+  _STAT_IS_GNU=false
+fi
+
 _stat_perms() {
   local file="$1"
-  if stat --version >/dev/null 2>&1; then
+  if [[ "${_STAT_IS_GNU}" == "true" ]]; then
     # GNU coreutils stat
     stat -c '%a' "${file}" 2>/dev/null || echo "unknown"
   else
@@ -22,7 +31,7 @@ _stat_perms() {
 
 _stat_owner_uid() {
   local file="$1"
-  if stat --version >/dev/null 2>&1; then
+  if [[ "${_STAT_IS_GNU}" == "true" ]]; then
     stat -c '%u' "${file}" 2>/dev/null || echo "unknown"
   else
     stat -f '%u' "${file}" 2>/dev/null || echo "unknown"
