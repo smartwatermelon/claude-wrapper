@@ -14,7 +14,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 LIB_DIR="${REPO_ROOT}/lib"
 
-# shellcheck source=lib/op-guard.sh
+# shellcheck source=tests/lib/op-guard.sh
 source "${TEST_DIR}/lib/op-guard.sh"
 
 # Every stub dir this suite creates nests under TEST_TMP, so the single
@@ -186,6 +186,7 @@ result="$(
 )"
 assert_equals "vault-gh-token" "${result}" \
   "op read succeeds -> GH_TOKEN exported from vault"
+# shellcheck disable=SC2312  # exit status of wc/tr intentionally discarded; this assertion checks captured output, not command success
 assert_equals "1" "$(wc -l <"${call_log}" | tr -d ' ')" \
   "op read succeeds on first attempt -> called exactly once"
 

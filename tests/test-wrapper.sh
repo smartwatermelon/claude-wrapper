@@ -20,7 +20,7 @@ REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 WRAPPER="${REPO_ROOT}/bin/claude-wrapper"
 LIB_DIR="${REPO_ROOT}/lib"
 
-# shellcheck source=lib/op-guard.sh
+# shellcheck source=tests/lib/op-guard.sh
 source "${TEST_DIR}/lib/op-guard.sh"
 
 # Temporary test environment
@@ -70,6 +70,7 @@ assert_equals() {
   return 0
 }
 
+# shellcheck disable=SC2329  # part of the shared assertion helper set; no current caller needs "not equals" but kept for future test authors alongside assert_equals/assert_contains
 assert_not_equals() {
   local unexpected="$1"
   local actual="$2"
@@ -449,7 +450,7 @@ test_permissions_autofix_behavior() {
   bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; ensure_secure_permissions '${test_file}' '400'" 2>/dev/null
 
   local perms
-  perms="$(stat -f '%A' "${test_file}" 2>/dev/null || stat -c '%a' "${test_file}" 2>/dev/null)"
+  perms="$(bash -c "source '${LIB_DIR}/permissions.sh'; _stat_perms '${test_file}'")"
   assert_equals "400" "${perms}" "ensure_secure_permissions fixes to target permissions"
 }
 
