@@ -36,4 +36,32 @@ jobs:
         run: bash tests/test-wrapper.sh
 
       - name: ShellCheck
+        run: |
+          shopt -s nullglob
+          lib_sh=(lib/*.sh)
+          bin_files=(bin/claude-wrapper)
+          test_sh=(tests/*.sh)
+          testlib_sh=(tests/lib/*.sh)
+
+          status=0
+          for label_count in \
+            "lib/*.sh:${#lib_sh[@]}" \
+            "bin/claude-wrapper:${#bin_files[@]}" \
+            "tests/*.sh:${#test_sh[@]}" \
+            "tests/lib/*.sh:${#testlib_sh[@]}"; do
+            label="${label_count%%:*}"
+            count="${label_count##*:}"
+            if [ "${count}" -eq 0 ]; then
+              echo "::error::ShellCheck pattern '${label}' matched no files - check test-suite layout" >&2
+              status=1
+            fi
+          done
+          if [ "${status}" -ne 0 ]; then
+            exit 1
+          fi
+
+          files=("${lib_sh[@]}" "${bin_files[@]}" "${test_sh[@]}" "${testlib_sh[@]}")
+          echo "ShellCheck target files:"
+          printf '  %s\n' "${files[@]}"
+          shellcheck --external-sources "${files[@]}"
         run: shellcheck --external-sources lib/*.sh bin/claude-wrapper tests/*.sh tests/lib/*.sh
