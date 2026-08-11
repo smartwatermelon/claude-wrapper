@@ -15,9 +15,12 @@
 # Usage:
 #   # shellcheck source=lib/op-guard.sh
 #   source "${TEST_DIR}/lib/op-guard.sh"
-#   op_guard_snapshot
 #   trap 'op_guard_verify; <other-cleanup>' EXIT
+#   op_guard_snapshot
 #   ... tests ...
+#
+# Trap-first is safe: op_guard_verify no-ops while _OP_GUARD_REAL_PATH is
+# still empty, i.e. before op_guard_snapshot has run.
 
 _OP_GUARD_REAL_PATH=""
 _OP_GUARD_REAL_SIZE=""
@@ -64,13 +67,13 @@ op_guard_verify() {
 
   if [[ "${post_size}" != "${_OP_GUARD_REAL_SIZE}" ]]; then
     echo "op-guard: FATAL - ${_OP_GUARD_REAL_PATH} changed size during test run (${_OP_GUARD_REAL_SIZE} -> ${post_size} bytes) - it may have been overwritten by a test stub (see issue #79)" >&2
-    exit 1
-  fi
-
-  # Belt-and-suspenders floor: even if size happened to match, a binary
-  # this small can't be a real 1Password CLI build.
-  if [[ "${post_size}" -lt 1000000 ]]; then
-    echo "op-guard: FATAL - ${_OP_GUARD_REAL_PATH} is only ${post_size} bytes, too small to be the real 1Password CLI (see issue #79)" >&2
+    # Belt-and-suspenders floor: a shrink onto something this small can't be
+    # a real 1Password CLI build. Only evaluated on the changed-size path
+    # (see issue #89) — a binary that never changed size, however small,
+    # was never touched by a test stub and isn't this check's concern.
+    if [[ "${post_size}" -lt 1000000 ]]; then
+      echo "op-guard: FATAL - ${_OP_GUARD_REAL_PATH} is only ${post_size} bytes, too small to be the real 1Password CLI (see issue #79)" >&2
+    fi
     exit 1
   fi
 }
