@@ -3,13 +3,39 @@
 # Provides functions to check and fix file permissions
 # Requires: lib/logging.sh must be sourced first
 
+# Get file permission bits as octal string, robust across BSD/GNU stat.
+# GNU stat's `-f` flag means "filesystem status" (not "format string" as on
+# BSD/macOS), so probing with `stat -f ... || stat -c ...` is unreliable:
+# GNU stat -f prints multi-line filesystem info to stdout and can still
+# exit 0, so the fallback never triggers and garbage gets parsed as perms.
+# Explicit platform detection (one-shot `stat --version` probe) avoids that.
+_stat_perms() {
+  local file="$1"
+  if stat --version >/dev/null 2>&1; then
+    # GNU coreutils stat
+    stat -c '%a' "${file}" 2>/dev/null || echo "unknown"
+  else
+    # BSD/macOS stat
+    stat -f '%A' "${file}" 2>/dev/null || echo "unknown"
+  fi
+}
+
+_stat_owner_uid() {
+  local file="$1"
+  if stat --version >/dev/null 2>&1; then
+    stat -c '%u' "${file}" 2>/dev/null || echo "unknown"
+  else
+    stat -f '%u' "${file}" 2>/dev/null || echo "unknown"
+  fi
+}
+
 # Validate file permissions - BLOCKING (returns 1 if insecure)
 check_file_permissions() {
   local file="$1"
   local perms
 
   # Get permissions (Darwin vs Linux stat syntax)
-  perms="$(stat -f '%A' "${file}" 2>/dev/null || stat -c '%a' "${file}" 2>/dev/null || echo "unknown")"
+  perms="$(_stat_perms "${file}")"
 
   if [[ "${perms}" == "unknown" ]]; then
     log_error "Could not check permissions for ${file}"
@@ -31,7 +57,7 @@ check_file_permissions() {
   # Verify file is owned by current user
   local file_owner
   local current_uid
-  file_owner="$(stat -f '%u' "${file}" 2>/dev/null || stat -c '%u' "${file}" 2>/dev/null || echo "unknown")"
+  file_owner="$(_stat_owner_uid "${file}")"
   current_uid="$(id -u)" || current_uid="unknown"
   if [[ "${file_owner}" != "${current_uid}" ]]; then
     log_error "${file} is not owned by current user (owner: ${file_owner}, current: ${current_uid})"
@@ -51,7 +77,7 @@ ensure_secure_permissions() {
   local perms
 
   # Get permissions (Darwin vs Linux stat syntax)
-  perms="$(stat -f '%A' "${file}" 2>/dev/null || stat -c '%a' "${file}" 2>/dev/null || echo "unknown")"
+  perms="$(_stat_perms "${file}")"
 
   if [[ "${perms}" == "unknown" ]]; then
     log_error "Could not check permissions for ${file}"
@@ -61,7 +87,7 @@ ensure_secure_permissions() {
   # Verify file is owned by current user first
   local file_owner
   local current_uid
-  file_owner="$(stat -f '%u' "${file}" 2>/dev/null || stat -c '%u' "${file}" 2>/dev/null || echo "unknown")"
+  file_owner="$(_stat_owner_uid "${file}")"
   current_uid="$(id -u)" || current_uid="unknown"
   if [[ "${file_owner}" != "${current_uid}" ]]; then
     log_error "${file} is not owned by current user (owner: ${file_owner}, current: ${current_uid})"
