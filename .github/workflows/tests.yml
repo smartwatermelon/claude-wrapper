@@ -35,6 +35,22 @@ jobs:
       - name: Run test-wrapper.sh
         run: bash tests/test-wrapper.sh
 
+      # ubuntu-24.04's apt-packaged shellcheck (0.9.0) disagrees with the
+      # 0.11.0 used in local dev (Homebrew) on SC2317 reachability analysis
+      # for functions that are defined but never called within the same
+      # file (e.g. helpers kept for future test authors, or invoked only
+      # indirectly). Pinning a specific release here keeps CI and local
+      # dev on the same shellcheck version so they always agree.
+      - name: Install ShellCheck v0.11.0
+        run: |
+          curl -Lfso /tmp/shellcheck.tar.xz \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          expected_sha256="8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+          echo "${expected_sha256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install -m 0755 /tmp/shellcheck-v0.11.0/shellcheck /usr/local/bin/shellcheck
+          shellcheck --version | grep -q "version: 0.11.0"
+
       - name: ShellCheck
         run: |
           shopt -s nullglob
@@ -64,4 +80,3 @@ jobs:
           echo "ShellCheck target files:"
           printf '  %s\n' "${files[@]}"
           shellcheck --external-sources "${files[@]}"
-        run: shellcheck --external-sources lib/*.sh bin/claude-wrapper tests/*.sh tests/lib/*.sh
