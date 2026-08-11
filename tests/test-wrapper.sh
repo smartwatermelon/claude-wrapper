@@ -20,7 +20,7 @@ REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 WRAPPER="${REPO_ROOT}/bin/claude-wrapper"
 LIB_DIR="${REPO_ROOT}/lib"
 
-# shellcheck source=lib/op-guard.sh
+# shellcheck source=tests/lib/op-guard.sh
 source "${TEST_DIR}/lib/op-guard.sh"
 
 # Temporary test environment

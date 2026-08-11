@@ -31,6 +31,7 @@ op_guard_snapshot() {
     echo "op-guard: no system 'op' binary on PATH, skipping integrity check" >&2
     return 0
   fi
+  # shellcheck disable=SC2312  # wc's exit status is intentionally discarded here: a failed/empty read is caught downstream by the empty-string check on _OP_GUARD_REAL_SIZE, not by wc's own exit code.
   _OP_GUARD_REAL_SIZE="$(wc -c <"${_OP_GUARD_REAL_PATH}" 2>/dev/null | tr -d ' ')"
 }
 
@@ -47,6 +48,7 @@ op_guard_verify() {
   fi
 
   local post_size
+  # shellcheck disable=SC2312  # wc's exit status is intentionally discarded here: a failed/empty read is caught by the empty-string check below, not by wc's own exit code.
   post_size="$(wc -c <"${_OP_GUARD_REAL_PATH}" 2>/dev/null | tr -d ' ')"
 
   if [[ -z "${post_size}" ]]; then

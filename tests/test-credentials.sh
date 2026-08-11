@@ -14,7 +14,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 LIB_DIR="${REPO_ROOT}/lib"
 
-# shellcheck source=lib/op-guard.sh
+# shellcheck source=tests/lib/op-guard.sh
 source "${TEST_DIR}/lib/op-guard.sh"
 
 # Every stub dir this suite creates nests under TEST_TMP, so the single
