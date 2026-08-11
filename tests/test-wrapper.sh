@@ -63,6 +63,7 @@ assert_equals() {
   return 0
 }
 
+# shellcheck disable=SC2329  # part of the shared assertion helper set; no current caller needs "not equals" but kept for future test authors alongside assert_equals/assert_contains
 assert_not_equals() {
   local unexpected="$1"
   local actual="$2"
