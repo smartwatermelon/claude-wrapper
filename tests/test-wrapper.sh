@@ -450,7 +450,7 @@ test_permissions_autofix_behavior() {
   bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; ensure_secure_permissions '${test_file}' '400'" 2>/dev/null
 
   local perms
-  perms="$(stat -f '%A' "${test_file}" 2>/dev/null || stat -c '%a' "${test_file}" 2>/dev/null)"
+  perms="$(bash -c "source '${LIB_DIR}/permissions.sh'; _stat_perms '${test_file}'")"
   assert_equals "400" "${perms}" "ensure_secure_permissions fixes to target permissions"
 }
 
