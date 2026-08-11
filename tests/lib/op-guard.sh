@@ -31,8 +31,14 @@ op_guard_snapshot() {
     echo "op-guard: no system 'op' binary on PATH, skipping integrity check" >&2
     return 0
   fi
-  # shellcheck disable=SC2312  # wc's exit status is intentionally discarded here: a failed/empty read is caught downstream by the empty-string check on _OP_GUARD_REAL_SIZE, not by wc's own exit code.
+  # shellcheck disable=SC2312  # wc's exit status is intentionally discarded here: a failed/empty read is caught by the explicit empty-string check below, not by wc's own exit code.
   _OP_GUARD_REAL_SIZE="$(wc -c <"${_OP_GUARD_REAL_PATH}" 2>/dev/null | tr -d ' ')"
+
+  if [[ -z "${_OP_GUARD_REAL_SIZE}" ]]; then
+    echo "op-guard: could not read size of ${_OP_GUARD_REAL_PATH}, skipping integrity check" >&2
+    _OP_GUARD_REAL_PATH=""
+    return 0
+  fi
 }
 
 # Re-resolves `op` after the suite runs and fails loudly if the path that
