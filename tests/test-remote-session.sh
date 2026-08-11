@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Test suite for lib/remote-session.sh
+# shellcheck disable=SC2312  # command substitutions inside assert_* calls capture output by design; exit status is not the thing under test
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -18,7 +19,7 @@ LIB_DIR="${REPO_ROOT}/lib"
 debug_log() { :; }
 
 # Source the module under test
-# shellcheck source=../lib/remote-session.sh
+# shellcheck source=lib/remote-session.sh
 source "${LIB_DIR}/remote-session.sh"
 
 # --- Helpers ---
