@@ -64,4 +64,3 @@ jobs:
           echo "ShellCheck target files:"
           printf '  %s\n' "${files[@]}"
           shellcheck --external-sources "${files[@]}"
-        run: shellcheck --external-sources lib/*.sh bin/claude-wrapper tests/*.sh tests/lib/*.sh
