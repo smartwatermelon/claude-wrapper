@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Claude binary discovery for claude-wrapper
 # Finds and validates the real claude binary
-# Requires: lib/logging.sh and lib/path-security.sh must be sourced first
+# Requires: lib/logging.sh, lib/permissions.sh, and lib/path-security.sh must be sourced first
+# (validate_claude_binary uses the _stat_perms/_stat_owner_uid helpers from permissions.sh)
 
 # Find the real claude binary, excluding the wrapper itself
 find_claude_binary() {
@@ -64,7 +65,7 @@ validate_claude_binary() {
 
   # Check owner (should be current user or root)
   local current_uid
-  binary_owner="$(stat -f '%u' "${binary}" 2>/dev/null || stat -c '%u' "${binary}" 2>/dev/null || echo "unknown")"
+  binary_owner="$(_stat_owner_uid "${binary}")"
   current_uid="$(id -u)" || current_uid="unknown"
   if [[ "${binary_owner}" != "${current_uid}" ]] && [[ "${binary_owner}" != "0" ]]; then
     log_error "Claude binary has unexpected owner (${binary_owner}): ${binary}"
@@ -72,7 +73,7 @@ validate_claude_binary() {
   fi
 
   # Check permissions (should not be world-writable)
-  binary_perms="$(stat -f '%A' "${binary}" 2>/dev/null || stat -c '%a' "${binary}" 2>/dev/null || echo "unknown")"
+  binary_perms="$(_stat_perms "${binary}")"
   if [[ "${binary_perms: -1}" =~ [2367] ]]; then
     log_error "Claude binary is world-writable (${binary_perms}): ${binary}"
     return 1
