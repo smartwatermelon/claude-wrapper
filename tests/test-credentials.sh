@@ -181,6 +181,7 @@ result="$(
 )"
 assert_equals "vault-gh-token" "${result}" \
   "op read succeeds -> GH_TOKEN exported from vault"
+# shellcheck disable=SC2312  # exit status of wc/tr intentionally discarded; this assertion checks captured output, not command success
 assert_equals "1" "$(wc -l <"${call_log}" | tr -d ' ')" \
   "op read succeeds on first attempt -> called exactly once"
 

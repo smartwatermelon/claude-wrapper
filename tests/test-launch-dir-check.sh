@@ -19,7 +19,7 @@ debug_log() { :; }
 log_warn() { echo "WARNING: $*" >&2; }
 
 # Source the module under test
-# shellcheck source=../lib/launch-dir-check.sh
+# shellcheck source=lib/launch-dir-check.sh
 source "${LIB_DIR}/launch-dir-check.sh"
 
 # --- Helpers ---
