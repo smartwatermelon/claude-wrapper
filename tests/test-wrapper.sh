@@ -431,6 +431,54 @@ test_permissions_behavior() {
   assert_exit_code "1" "${exit_code}" "check_file_permissions rejects world-readable files"
 }
 
+test_validate_claude_binary_behavior() {
+  echo ""
+  echo "Test 3.2b: validate_claude_binary correctly accepts/rejects binaries"
+
+  if [[ ! -f "${LIB_DIR}/permissions.sh" ]] || [[ ! -f "${LIB_DIR}/binary-discovery.sh" ]]; then
+    ((TESTS_RUN += 1))
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Cannot test - permissions.sh or binary-discovery.sh does not exist"
+    return 0
+  fi
+
+  # Create mock binaries owned by the current user (the only owner we can
+  # legitimately test without sudo/another real user account - chowning to
+  # another UID would require privileges we don't have in CI or locally, so
+  # the "wrong owner" rejection branch is intentionally not covered here).
+  local safe_binary="${TEST_TMP}/claude-safe"
+  local world_writable_binary="${TEST_TMP}/claude-world-writable"
+
+  echo '#!/usr/bin/env bash' >"${safe_binary}"
+  echo 'echo mock claude' >>"${safe_binary}"
+  chmod 755 "${safe_binary}"
+
+  echo '#!/usr/bin/env bash' >"${world_writable_binary}"
+  echo 'echo mock claude' >>"${world_writable_binary}"
+  chmod 777 "${world_writable_binary}"
+
+  local exit_code
+
+  # Binary owned by current user with safe (non-world-writable) permissions
+  # should pass validation.
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; source '${LIB_DIR}/binary-discovery.sh'; validate_claude_binary '${safe_binary}'" \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_exit_code "0" "${exit_code}" "validate_claude_binary accepts owner-safe, non-world-writable binary"
+
+  # World-writable binary should be rejected even though owner is current user.
+  exit_code=0
+  bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; source '${LIB_DIR}/binary-discovery.sh'; validate_claude_binary '${world_writable_binary}'" \
+    >/dev/null 2>&1 || exit_code=$?
+  assert_exit_code "1" "${exit_code}" "validate_claude_binary rejects world-writable binary"
+
+  # Also verify the rejection actually logs the expected reason, to confirm
+  # the world-writable check (not some other failure) is what fired.
+  local error_output
+  error_output="$(bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; source '${LIB_DIR}/binary-discovery.sh'; validate_claude_binary '${world_writable_binary}'" 2>&1)" || true
+  assert_contains "world-writable" "${error_output}" "validate_claude_binary logs world-writable reason on rejection"
+}
+
 test_permissions_autofix_behavior() {
   echo ""
   echo "Test 3.3: Permission auto-fix works correctly"
@@ -766,6 +814,7 @@ main() {
   echo "--- Section 3: Behavioral Tests ---"
   test_logging_behavior
   test_permissions_behavior
+  test_validate_claude_binary_behavior
   test_permissions_autofix_behavior
   test_path_security_behavior
   test_git_identity_behavior
