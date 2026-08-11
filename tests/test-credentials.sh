@@ -14,11 +14,16 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 LIB_DIR="${REPO_ROOT}/lib"
 
+# shellcheck source=tests/lib/op-guard.sh
+source "${TEST_DIR}/lib/op-guard.sh"
+
 # Every stub dir this suite creates nests under TEST_TMP, so the single
 # EXIT trap below sweeps all of them even if a test fails partway through
-# under set -euo pipefail — see issue #70.
+# under set -euo pipefail — see issue #70. op_guard_verify runs first so it
+# still catches a clobbered system `op` even on early failure (see #79).
 TEST_TMP="$(mktemp -d)"
-trap 'rm -rf "${TEST_TMP}"' EXIT
+trap 'op_guard_verify; rm -rf "${TEST_TMP}"' EXIT
+op_guard_snapshot
 
 # --- Helpers ---
 

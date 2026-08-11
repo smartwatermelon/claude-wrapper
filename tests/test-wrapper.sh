@@ -20,6 +20,9 @@ REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 WRAPPER="${REPO_ROOT}/bin/claude-wrapper"
 LIB_DIR="${REPO_ROOT}/lib"
 
+# shellcheck source=tests/lib/op-guard.sh
+source "${TEST_DIR}/lib/op-guard.sh"
+
 # Temporary test environment
 TEST_TMP=""
 
@@ -32,6 +35,9 @@ setup_test_env() {
 }
 
 cleanup_test_env() {
+  # Runs first so it still catches a clobbered system `op` even if a test
+  # failed partway through under set -euo pipefail — see issue #79.
+  op_guard_verify
   if [[ -n "${TEST_TMP:-}" ]] && [[ -d "${TEST_TMP}" ]]; then
     rm -rf "${TEST_TMP}"
   fi
@@ -39,6 +45,7 @@ cleanup_test_env() {
 
 # Trap cleanup on exit
 trap cleanup_test_env EXIT
+op_guard_snapshot
 
 # Test helpers
 # Note: Using ((var += 1)) instead of ((var++)) per CLAUDE.md guidelines
@@ -443,7 +450,7 @@ test_permissions_autofix_behavior() {
   bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/permissions.sh'; ensure_secure_permissions '${test_file}' '400'" 2>/dev/null
 
   local perms
-  perms="$(stat -f '%A' "${test_file}" 2>/dev/null || stat -c '%a' "${test_file}" 2>/dev/null)"
+  perms="$(bash -c "source '${LIB_DIR}/permissions.sh'; _stat_perms '${test_file}'")"
   assert_equals "400" "${perms}" "ensure_secure_permissions fixes to target permissions"
 }
 
