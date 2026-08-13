@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude binary discovery for claude-wrapper
 # Finds and validates the real claude binary
-# Requires: lib/logging.sh, lib/permissions.sh, and lib/path-security.sh must be sourced first
+# Requires: lib/logging.sh and lib/permissions.sh must be sourced first
 # (validate_claude_binary uses the _stat_perms/_stat_owner_uid helpers from permissions.sh)
 
 # Find the real claude binary, excluding the wrapper itself
