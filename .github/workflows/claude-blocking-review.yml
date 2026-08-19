@@ -12,7 +12,10 @@ permissions:
 
 jobs:
   claude-review:
-    uses: smartwatermelon/github-workflows/.github/workflows/claude-blocking-review.yml@v3
+    # Deliberate: float the first-party major tag to receive upstream security
+    # fixes without a PR here. Standardized fleet-wide; see #117.
+    # Same-owner reusable workflow, not a third-party action.
+    uses: smartwatermelon/github-workflows/.github/workflows/claude-blocking-review.yml@v3  # zizmor: ignore[unpinned-uses]
     with:
       pr_number: ${{ github.event.pull_request.number }}
     secrets:
