@@ -1,0 +1,9 @@
+name: Standards Check
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+permissions:
+  contents: read
+jobs:
+  standards-check:
+    uses: smartwatermelon/github-workflows/.github/workflows/standards-check.yml@standards-check-v1
