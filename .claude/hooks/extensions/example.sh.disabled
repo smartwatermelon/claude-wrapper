@@ -7,7 +7,9 @@
 # TO ENABLE THIS EXTENSION:
 #   1. Rename to remove .disabled suffix:
 #      mv example.sh.disabled my-validation.sh
-#   2. Customize the validation logic below
+#   2. Customize the validation logic below, and turn on the checks you want
+#      by setting the matching ENABLE_* variable to 1 in main() (all default
+#      to 0, so an unmodified copy of this file runs no checks)
 #   3. Ensure it's executable:
 #      chmod +x .claude/hooks/extensions/my-validation.sh
 #
@@ -31,7 +33,8 @@
 # ============================================
 
 check_business_hours() {
-  local current_hour=$(date +%H)
+  local current_hour
+  current_hour=$(date +%H)
 
   # Check if current time is during business hours (9 AM - 5 PM)
   if [[ ${current_hour} -ge 9 && ${current_hour} -lt 17 ]]; then
@@ -57,15 +60,19 @@ check_business_hours() {
 
 check_todo_comments() {
   # Get staged changes
-  local staged_changes=$(git diff --cached)
+  local staged_changes
+  staged_changes=$(git diff --cached)
 
   # Look for TODO comments without issue references
-  # Pattern: TODO without a # followed by digits
-  if echo "${staged_changes}" | grep -iE '^\+.*TODO(?! #[0-9])'; then
+  # Pattern: TODO without a # followed by digits (grep -E has no lookahead,
+  # so filter added lines containing TODO, then exclude ones with "TODO #N")
+  local todo_lines
+  todo_lines=$(echo "${staged_changes}" | grep -iE '^\+.*TODO' | grep -vE 'TODO #[0-9]' || true)
+  if [[ -n "${todo_lines}" ]]; then
     log_warn "⚠️  TODO comment without issue reference detected"
     echo ""
     echo "Found TODO comments that don't reference an issue:"
-    echo "${staged_changes}" | grep -iE '^\+.*TODO(?! #[0-9])' | sed 's/^/  /'
+    echo "${todo_lines}" | sed 's/^/  /'
     echo ""
     echo "Please use format: TODO #123 (with GitHub issue number)"
     return 1
@@ -80,14 +87,15 @@ check_todo_comments() {
 
 check_hardcoded_secrets() {
   # Get staged changes
-  local staged_changes=$(git diff --cached)
+  local staged_changes
+  staged_changes=$(git diff --cached)
 
   # Check for common secret patterns
   local secret_patterns=(
-    'api[_-]?key.*=.*["\x27][a-zA-Z0-9]{32,}'
-    'secret[_-]?key.*=.*["\x27][a-zA-Z0-9]{32,}'
-    'password.*=.*["\x27][^"\x27]{8,}'
-    'token.*=.*["\x27][a-zA-Z0-9]{32,}'
+    "api[_-]?key.*=.*[\"'][a-zA-Z0-9]{32,}"
+    "secret[_-]?key.*=.*[\"'][a-zA-Z0-9]{32,}"
+    "password.*=.*[\"'][^\"']{8,}"
+    "token.*=.*[\"'][a-zA-Z0-9]{32,}"
   )
 
   for pattern in "${secret_patterns[@]}"; do
@@ -110,7 +118,8 @@ check_hardcoded_secrets() {
 
 check_formatting() {
   # Get list of staged files
-  local staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+  local staged_files
+  staged_files=$(git diff --cached --name-only --diff-filter=ACM)
 
   # Check if prettier is available
   if ! command -v prettier &>/dev/null; then
@@ -119,10 +128,12 @@ check_formatting() {
   fi
 
   # Check JavaScript/TypeScript files
-  local js_files=$(echo "${staged_files}" | grep -E '\.(js|jsx|ts|tsx)$' || true)
+  local js_files
+  js_files=$(echo "${staged_files}" | grep -E '\.(js|jsx|ts|tsx)$' || true)
 
   if [[ -n "${js_files}" ]]; then
-    local unformatted_files=$(echo "${js_files}" | xargs prettier --check 2>&1 | grep -E '^/' || true)
+    local unformatted_files
+    unformatted_files=$(echo "${js_files}" | xargs prettier --check 2>&1 | grep -E '^/' || true)
 
     if [[ -n "${unformatted_files}" ]]; then
       log_error "❌ Unformatted files detected"
@@ -150,7 +161,8 @@ check_commit_message_format() {
     return 0
   fi
 
-  local commit_msg=$(cat "${commit_msg_file}")
+  local commit_msg
+  commit_msg=$(cat "${commit_msg_file}")
 
   # Skip merge commits
   if [[ "${commit_msg}" =~ ^Merge ]]; then
@@ -180,13 +192,16 @@ check_commit_message_format() {
 # ============================================
 
 main() {
-  # Uncomment the checks you want to enable:
+  # Every check is OFF by default. Enable the ones you want by setting the
+  # matching variable to 1 — either here (change the default) or in the
+  # environment. Enabling a check makes it block the git operation on
+  # failure, exactly as the extension contract above describes.
 
-  # check_business_hours "$@" || exit 1
-  # check_todo_comments || exit 1
-  # check_hardcoded_secrets || exit 1
-  # check_formatting || exit 1
-  # check_commit_message_format "$@" || exit 1
+  [[ "${ENABLE_BUSINESS_HOURS:-0}" == 1 ]] && { check_business_hours "$@" || exit 1; }
+  [[ "${ENABLE_TODO_COMMENTS:-0}" == 1 ]] && { check_todo_comments || exit 1; }
+  [[ "${ENABLE_HARDCODED_SECRETS:-0}" == 1 ]] && { check_hardcoded_secrets || exit 1; }
+  [[ "${ENABLE_FORMATTING:-0}" == 1 ]] && { check_formatting || exit 1; }
+  [[ "${ENABLE_COMMIT_MESSAGE_FORMAT:-0}" == 1 ]] && { check_commit_message_format "$@" || exit 1; }
 
   # If all checks pass (or none are enabled)
   log_success "✅ Example validation passed"
