@@ -1,0 +1,15 @@
+# Repo-level shellcheck config.
+#
+# Every lib/*.sh sources its siblings through a variable path
+# (`source "${WRAPPER_LIB}/logging.sh"`, `source "${TEST_DIR}/lib/op-guard.sh"`),
+# which shellcheck cannot resolve on its own. The `# shellcheck source=...`
+# directives at those call sites name the real target, but a directive is only
+# followed when external sourcing is enabled — otherwise every one of them
+# raises SC1091.
+#
+# Local runs passed anyway, because with no rc in the repo shellcheck fell
+# back to the developer's ~/.shellcheckrc, which happens to set this. CI has
+# no such file, so it saw the raw SC1091 and failed — a gap no local lint
+# could catch. Setting it here makes both environments agree, and removes the
+# need to remember `--external-sources` on every manual invocation.
+external-sources=true
