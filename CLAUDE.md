@@ -21,10 +21,12 @@ There is no test runner script — run individual test files directly. No `npm t
 ### Lint
 
 ```bash
-shellcheck --external-sources lib/*.sh bin/claude-wrapper tests/*.sh
+shellcheck -S info lib/*.sh bin/claude-wrapper tests/*.sh tests/lib/*.sh
 ```
 
-Use `--external-sources` because lib files source each other via variables (`${WRAPPER_LIB}/logging.sh`), and plain `shellcheck` emits false SC1091 warnings.
+No `--external-sources` flag is needed: the repo-root `.shellcheckrc` sets `external-sources=true` for every run. Lib and test files source each other through variable paths (`${WRAPPER_LIB}/logging.sh`, `${TEST_DIR}/lib/op-guard.sh`), which shellcheck cannot resolve unless external sourcing is enabled — without it, the `# shellcheck source=...` directives at those call sites are ignored and each one raises a false SC1091.
+
+Keep that config in the repo rather than relying on a personal `~/.shellcheckrc`. CI (`standards-check`) runs bare `shellcheck -S info` with no flags and no user-level config, so a machine-local rc makes local lint pass while CI fails — see PR #122.
 
 ### Debug mode
 
@@ -129,9 +131,9 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 *~400 tokens/session saved*
 
-- Run `shellcheck --external-sources <file>` (not plain `shellcheck`) for files that source other scripts via variables (e.g., `source "${WRAPPER_LIB}/logging.sh"`). Plain shellcheck produces SC1091 errors that are not real failures.
-- `shellcheck` on `bin/claude-wrapper` produces SC1091 errors for sourced lib files; suppress with `--exclude=SC1091` or use `shellcheck --external-sources lib/file.sh` instead
-- Always run `shellcheck` before committing shell script changes
+- Run plain `shellcheck -S info <file>`. The repo-root `.shellcheckrc` sets `external-sources=true`, so variable-path sources (`source "${WRAPPER_LIB}/logging.sh"`) resolve and the old `--external-sources` flag is redundant.
+- Do not suppress SC1091 with `--exclude=SC1091` or a `# shellcheck disable` directive — the rc resolves it properly instead of hiding it.
+- Always run `shellcheck` before committing shell script changes.
 
 ### Git Workflow
 

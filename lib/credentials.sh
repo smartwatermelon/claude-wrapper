@@ -2,8 +2,13 @@
 # credentials.sh — inject CCCLI credentials from 1Password at wrapper launch
 #
 # Fetches OP_SERVICE_ACCOUNT_TOKEN from macOS Keychain and GH_TOKEN from the
-# Automation vault. Both are scoped to the wrapper process lifetime only —
-# they are not present in the interactive shell environment.
+# Automation vault. Both are exported into the wrapper process and inherited
+# by everything it launches, including the agent's own shell — they are not
+# present in the user's login shell, but they ARE visible to child processes.
+#
+# If the vault fetch fails, GH_TOKEN is set to a deliberately invalid sentinel
+# rather than left unset, so gh fails closed instead of falling back to the
+# keyring OAuth token (which holds admin:org). See _load_gh_token.
 #
 # Requires: lib/logging.sh must be sourced first.
 # Must be sourced before lib/secrets-loader.sh (which needs OP_SERVICE_ACCOUNT_TOKEN).
@@ -17,6 +22,11 @@ readonly _CREDENTIALS_SH_LOADED=1
 # =========================================================
 readonly _CREDS_KEYCHAIN_SERVICE="op-service-account-claude-automation"
 readonly _CREDS_GH_TOKEN_REF="op://Automation/GitHub - CCCLI/Token"
+
+# Sentinel exported when the vault fetch fails, so gh fails closed instead of
+# falling back to the keyring OAuth token. Must be non-empty (an empty value
+# would re-enable the keyring fallback) and must not be a valid credential.
+readonly _CREDS_GH_TOKEN_FETCH_FAILED="invalid-cccli-token-vault-fetch-failed"
 
 # Computed once so both credential-fetch functions below don't each re-run
 # `command -v timeout` on every invocation.
@@ -74,7 +84,9 @@ _load_service_account_token() {
 # GH_TOKEN is the restricted-scope CCCLI PAT, separate from the
 # personal token in gh's keyring.
 _load_gh_token() {
-  if [[ -n "${GH_TOKEN:-}" ]]; then
+  # A previously-exported failure sentinel is not a real token: treat it as
+  # unset so a retry can still reach the vault rather than being skipped.
+  if [[ -n "${GH_TOKEN:-}" && "${GH_TOKEN}" != "${_CREDS_GH_TOKEN_FETCH_FAILED}" ]]; then
     debug_log "GH_TOKEN already set, skipping vault lookup"
     return 0
   fi
@@ -112,7 +124,16 @@ _load_gh_token() {
     export GH_TOKEN="${token}"
     debug_log "GH_TOKEN loaded from Automation vault"
   else
-    log_warn "Failed to fetch GH_TOKEN from 1Password — gh CLI will use keyring fallback"
+    # Fail closed. Leaving GH_TOKEN unset makes gh fall back to the user's
+    # keyring OAuth token, which carries repo/workflow/admin:org/delete_repo —
+    # far wider than the restricted CCCLI PAT this function exists to inject.
+    # A transient op failure (locked vault, missing service account token,
+    # network blip, backoff exhausted) must not silently upgrade the agent's
+    # GitHub privileges. Export a deliberately invalid sentinel instead: gh
+    # then fails with a clear auth error rather than quietly succeeding with
+    # more access than intended.
+    export GH_TOKEN="${_CREDS_GH_TOKEN_FETCH_FAILED}"
+    log_warn "Failed to fetch GH_TOKEN from 1Password — gh disabled for this session (keyring fallback deliberately blocked)"
   fi
   unset token
 }

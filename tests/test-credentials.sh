@@ -190,6 +190,50 @@ assert_equals "vault-gh-token" "${result}" \
 assert_equals "1" "$(wc -l <"${call_log}" | tr -d ' ')" \
   "op read succeeds on first attempt -> called exactly once"
 
+# op read fails (all attempts) -> GH_TOKEN exported as the invalid sentinel,
+# NOT left unset. Leaving it unset would let gh fall back to the user's keyring
+# OAuth token (repo/workflow/admin:org), silently widening the agent's access
+# on any transient vault failure. Fail closed instead.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+cat >"${stub_dir}/op" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN:-unset}\"" 2>/dev/null
+)"
+assert_equals "invalid-cccli-token-vault-fetch-failed" "${result}" \
+  "op read fails -> GH_TOKEN set to invalid sentinel (fails closed, no keyring fallback)"
+
+# The same failure must warn, so a degraded session is visible rather than silent.
+warn_output="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
+)"
+assert_contains "gh disabled for this session" "${warn_output}" \
+  "op read fails -> warns that gh is disabled"
+
+# A previously-set sentinel must not short-circuit a later retry: it is a
+# failure marker, not a real token.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+cat >"${stub_dir}/op" <<'EOF'
+#!/usr/bin/env bash
+echo "recovered-gh-token"
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN="invalid-cccli-token-vault-fetch-failed" \
+    bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN:-unset}\"" 2>/dev/null
+)"
+assert_equals "recovered-gh-token" "${result}" \
+  "sentinel present -> vault lookup still runs (sentinel is not a valid preset)"
+
 # --- Summary ---
 
 echo ""
