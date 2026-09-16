@@ -8,6 +8,9 @@ poc/
 tests/tmp/
 tests/*.log
 tests/*.tmp
+# Wrapper copy used by the mock-integration test; must sit in bin/ so the
+# wrapper's "<own dir>/../lib" resolves. Normally removed by a RETURN trap.
+bin/.test-integration-wrapper.*
 
 # macOS
 .DS_Store

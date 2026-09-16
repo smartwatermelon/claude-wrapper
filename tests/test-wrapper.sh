@@ -683,8 +683,17 @@ test_mock_integration() {
   local mock_claude
   mock_claude="$(create_mock_claude)"
 
-  # Create a modified wrapper that uses our mock
-  local test_wrapper="${TEST_TMP}/test-integration-wrapper"
+  # Create a modified wrapper that uses our mock. The copy must live beside the
+  # real wrapper: the wrapper resolves WRAPPER_LIB as "<own dir>/../lib", so a
+  # copy in TEST_TMP cannot source lib/logging.sh and exits 1 before reaching
+  # exec -- which silently skipped this whole test.
+  #
+  # Because the copy now runs for real, it sources credentials.sh, which may hit
+  # the Keychain and 1Password when GH_TOKEN/OP_SERVICE_ACCOUNT_TOKEN are not
+  # already exported. Both lookups are bounded by `timeout` and degrade to a
+  # no-op on failure, so this stays fast and passes offline.
+  local test_wrapper
+  test_wrapper="$(dirname "${WRAPPER}")/.test-integration-wrapper.$$"
 
   # Copy wrapper and modify to use mock
   if ! cp "${WRAPPER}" "${test_wrapper}"; then
@@ -692,12 +701,31 @@ test_mock_integration() {
     return 0
   fi
 
-  # Replace exec with our mock
-  sed -i.bak "s|exec \"\${CLAUDE_BIN}\"|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null \
-    || sed -i '' "s|exec \"\${CLAUDE_BIN}\"|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null || {
+  # The copy sits inside the repo, so remove it on every exit path below. The
+  # trap body is single-quoted, so test_wrapper expands when the trap fires --
+  # while this function's locals are still in scope.
+  trap 'rm -f "${test_wrapper}" "${test_wrapper}.bak"' RETURN
+
+  # Replace exec with our mock. The wrapper execs claude via caffeinate, so this
+  # strips the caffeinate prefix too -- the mock is what we want to observe, and
+  # holding a sleep assertion during tests would be a side effect.
+  local dollar='$'
+  local exec_pattern="exec \"${dollar}{CAFF_BIN}\" -i \"${dollar}{CLAUDE_BIN}\""
+  sed -i.bak "s|${exec_pattern}|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null \
+    || sed -i '' "s|${exec_pattern}|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null || {
     echo -e "${YELLOW}⚠${NC} Integration test skipped (sed failed)"
     return 0
   }
+
+  # Skip with an explicit reason if the exec line drifts, rather than silently
+  # degrading to a no-op substitution that runs the real binary and still
+  # "passes". Test 4.5 is what hard-fails on exec-line drift.
+  # Scoped to exec lines: ${CLAUDE_BIN} legitimately survives elsewhere, in the
+  # validate_claude_binary call and the debug_log lines.
+  if grep -E '^[[:space:]]*exec ' "${test_wrapper}" | grep -qF "${dollar}{CLAUDE_BIN}"; then
+    echo -e "${YELLOW}⚠${NC} Integration test skipped (exec pattern did not match wrapper)"
+    return 0
+  fi
 
   chmod +x "${test_wrapper}"
 
@@ -723,6 +751,54 @@ test_no_old_naming_references() {
 
   assert_not_contains "claude-with-identity" "${wrapper_content}" "No claude-with-identity references in wrapper"
   assert_not_contains "claude-custom" "${wrapper_content}" "No claude-custom references in wrapper"
+}
+
+test_caffeinate_launch() {
+  echo ""
+  echo "Test 4.5: Launches claude via caffeinate"
+
+  # Needles are built rather than written as literals so the shell never sees an
+  # unexpanded ${...} to warn about (SC2016), and grep -F keeps them exact.
+  local dollar='$'
+  local caff_ref="\"${dollar}{CAFF_BIN}\""
+  local claude_ref="\"${dollar}{CLAUDE_BIN}\""
+
+  # Hardcoded path, not PATH-resolved: caffeinate inherits GH_TOKEN and
+  # OP_SERVICE_ACCOUNT_TOKEN, so a shadowing binary would bypass the validation
+  # applied to CLAUDE_BIN. SIP guarantees this path.
+  ((TESTS_RUN += 1))
+  if grep -qF "CAFF_BIN=\"/usr/bin/caffeinate\"" "${WRAPPER}"; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} caffeinate path is hardcoded"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} caffeinate path is hardcoded"
+  fi
+
+  ((TESTS_RUN += 1))
+  if grep -qF "command -v caffeinate" "${WRAPPER}"; then
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} caffeinate is not resolved via PATH"
+  else
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} caffeinate is not resolved via PATH"
+  fi
+
+  # Every exec branch must go through caffeinate with -i, or a session launched
+  # down the uncovered branch still lets the system sleep. -i holds the assertion
+  # on battery as well; -s is AC-only.
+  local total_execs caffeinated_execs
+  total_execs="$(grep -cE '^[[:space:]]*exec ' "${WRAPPER}")" || total_execs=0
+  caffeinated_execs="$(grep -cF "exec ${caff_ref} -i ${claude_ref}" "${WRAPPER}")" || caffeinated_execs=0
+
+  ((TESTS_RUN += 1))
+  if [[ ${caffeinated_execs} -gt 0 ]] && [[ ${caffeinated_execs} -eq ${total_execs} ]]; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} All ${total_execs} exec branches launch via 'caffeinate -i'"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Only ${caffeinated_execs} of ${total_execs} exec branches launch via 'caffeinate -i'"
+  fi
 }
 
 # =============================================================================
@@ -827,6 +903,7 @@ main() {
   test_wrapper_shellcheck
   test_mock_integration
   test_no_old_naming_references
+  test_caffeinate_launch
 
   # Section 5: Regression Tests
   echo ""

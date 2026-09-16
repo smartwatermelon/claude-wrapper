@@ -45,13 +45,14 @@ The wrapper is a single orchestrator that sources modules in dependency order, t
 1. **Resolve own path** — `realpath` to handle symlinks
 2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `launch-dir-check.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
 3. **Check launch directory** — `check_launch_dir` warns (non-blocking) if CWD is exactly `$HOME` or `$HOME/Developer`, since neither is a git repo and both carry an unrelated accumulated MCP server surface in `~/.claude/.claude.json`
-4. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
-5. **Validate binary** — ownership and permission checks on the discovered binary
-6. **Initialize secrets loader** — `init_secrets_loader` discovers per-project secrets files and authenticates if needed
-7. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
-8. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
-9. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
-10. **`exec`** — replaces the wrapper process with the real binary, applying the remote-control args from step 7
+4. **Locate caffeinate** — hardcoded to `/usr/bin/caffeinate`, checked for executability; hard-fails if absent
+5. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
+6. **Validate binary** — ownership and permission checks on the discovered binary
+7. **Initialize secrets loader** — `init_secrets_loader` discovers per-project secrets files and authenticates if needed
+8. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
+9. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
+10. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
+11. **`exec`** — replaces the wrapper process with `caffeinate -i <claude>`, applying the remote-control args from step 8
 
 ### Module dependency chain
 
@@ -65,6 +66,16 @@ Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` 
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks
 
 `GH_TOKEN` is fetched by `credentials.sh` at wrapper launch, via the service account token loaded from Keychain. Which vault item it reads depends on the launch directory's GitHub owner — see "GitHub token selection" below. This supersedes the previous flat-file `github-token.sh` module, which no longer exists in this repo.
+
+#### Sleep prevention
+
+The wrapper execs `claude` through `caffeinate -i`, so the system does not idle-sleep in the middle of a long session (issue #121). `caffeinate` holds the assertion for the duration of the utility it launches and releases it on exit, so nothing leaks between sessions.
+
+`caffeinate` execs the utility in place rather than supervising it: the `claude` process keeps the same PID, TTY, signal disposition, and exit status it would have had without the wrapper. Nothing downstream needs to forward signals or propagate exit codes.
+
+`CAFF_BIN` is hardcoded to `/usr/bin/caffeinate` rather than resolved with `command -v`. `caffeinate` runs with `GH_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN` in its environment, so a binary of the same name earlier in `$PATH` would receive both — and would bypass the ownership/permission validation that `binary-discovery.sh` applies to the `claude` binary. System Integrity Protection guarantees the `/usr/bin` path and prevents it being replaced.
+
+`-i` (prevent idle sleep) holds on battery as well as AC; `-s` is AC-only.
 
 #### GitHub token selection
 
