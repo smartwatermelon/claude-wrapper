@@ -57,14 +57,30 @@ The wrapper is a single orchestrator that sources modules in dependency order, t
 
 Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` and `path-security.sh` are foundational — other modules call their functions.
 
-- **`credentials.sh`** — fetches `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain (service `op-service-account-claude-automation`) and `GH_TOKEN` from `op://Automation/GitHub - CCCLI/Token` via that service account, retrying `op read` with exponential backoff. Runs automatically as a side effect of being sourced (not invoked as a discrete step later in the flow). Both values are scoped to the wrapper process lifetime — they are not present in the interactive shell environment. Falls back to a keyring/no-op if the Keychain lookup or `op read` fails, logging a warning rather than aborting. Must be sourced before `secrets-loader.sh`, which depends on `OP_SERVICE_ACCOUNT_TOKEN`.
+- **`credentials.sh`** — fetches `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain (service `op-service-account-claude-automation`) and `GH_TOKEN` from the Automation vault via that service account, retrying `op read` with exponential backoff. Runs automatically as a side effect of being sourced (not invoked as a discrete step later in the flow). Both are exported into the wrapper process and inherited by its children, including the agent's own shell — they are absent from the user's login shell but visible to anything the wrapper launches. If the vault fetch fails, `GH_TOKEN` is set to a deliberately invalid sentinel so `gh` fails closed, rather than left unset (which would let `gh` fall back to the keyring OAuth token and its `admin:org` scope). Must be sourced before `secrets-loader.sh`, which depends on `OP_SERVICE_ACCOUNT_TOKEN`.
 - **`secrets-loader.sh`** — discovers secrets files at two levels (project `.claude/secrets.op`, local `.claude/secrets.local.op`), validates permissions/paths, runs `op inject` to resolve `op://Automation/...` references against the Automation vault via service account. Invoked explicitly as `init_secrets_loader` and `inject_secrets` (see execution flow above).
 - **`launch-dir-check.sh`** — `check_launch_dir` warns to stderr (never blocks) when CWD is exactly `$HOME` or `$HOME/Developer` — not subdirectories, which are legitimate git repos — since per-project secrets/pre-launch hooks are skipped there and an unrelated MCP server surface from `~/.claude/.claude.json` loads instead; recommends `--add-dir` for multi-repo work
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
 - **`remote-session.sh`** — derives a session name from the git repo basename, injects `--remote-control` for interactive sessions only
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks
 
-`GH_TOKEN` is fetched by `credentials.sh` at wrapper launch (`op://Automation/GitHub - CCCLI/Token`, via the service account token loaded from Keychain), scoped to the wrapper process only — it is not exported into the interactive shell environment. This supersedes the previous flat-file `github-token.sh` module, which no longer exists in this repo.
+`GH_TOKEN` is fetched by `credentials.sh` at wrapper launch, via the service account token loaded from Keychain. Which vault item it reads depends on the launch directory's GitHub owner — see "GitHub token selection" below. This supersedes the previous flat-file `github-token.sh` module, which no longer exists in this repo.
+
+#### GitHub token selection
+
+A fine-grained PAT is bound to exactly one GitHub resource owner at creation and cannot be repointed, so one token cannot cover a personal account and two orgs. `credentials.sh` derives the owner from the launch directory's `origin` remote and selects the matching vault item:
+
+| Owner | Vault item |
+| ------ | ------- |
+| `smartwatermelon` | `op://Automation/CCCLI-SWM/token` |
+| `nightowlstudiollc` | `op://Automation/CCCLI-NOS/token` |
+| anything else, or owner not derivable | `op://Automation/GitHub - CCCLI/Token` |
+
+One `op read` per launch — the token is selected, not accumulated. "Not derivable" covers a non-git directory, a repo with no `origin`, and a non-GitHub remote; all fall back to the personal token, which still covers the `twistedmelonman` repos.
+
+Cross-owner work in a single session gets the launch directory's token, which will fail with a permissions error against the other owner. That is intentional — it fails loudly rather than silently escalating. `CLAUDE_DEBUG=true` logs the owner and the ref that was selected.
+
+Background: the 2026-09 org migration moved repos out from under the single personal-owner PAT, so `gh` lost access to every org repo while SSH-based git kept working. See issue #120.
 
 ### Security model
 
@@ -77,7 +93,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 | `.claude/secrets.op` | Per-project 1Password secrets (committed); references `op://Automation/...` |
 | `.claude/secrets.local.op` | Per-project local overrides (gitignored) |
 
-`GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from `op://Automation/GitHub - CCCLI/Token` — not from a flat file, and not sourced by shell startup.
+`GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from the Automation vault item matching the launch directory's GitHub owner (see "GitHub token selection" above) — not from a flat file, and not sourced by shell startup.
 
 ## Headroom Learned Patterns
 
@@ -105,7 +121,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 *~500 tokens/session saved*
 
-- `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from `op://Automation/GitHub - CCCLI/Token`; no flat token files exist
+- `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from one of three Automation vault items chosen by the launch directory's GitHub owner (`CCCLI-SWM`, `CCCLI-NOS`, or `GitHub - CCCLI` as fallback); no flat token files exist
 - Per-project secrets live in `.claude/secrets.op` (committed) referencing `op://Automation/...`; resolved by `secrets-loader.sh` via `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID)
 - The global `~/.config/claude-code/secrets.op` no longer exists
 - `opp <args>` runs `op` as your personal account (unsets service account token for that subprocess); needed for Personal vault access (e.g. prep-airdrop.sh)
