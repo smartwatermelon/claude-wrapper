@@ -43,6 +43,17 @@ source "${WRAPPER_LIB}/remote-session.sh"
 # Warn (non-blocking) if launched from $HOME or $HOME/Developer exactly
 check_launch_dir
 
+# Locate caffeinate, which holds an idle-sleep assertion for the session's
+# duration. Hardcoded rather than PATH-resolved: caffeinate runs with GH_TOKEN
+# and OP_SERVICE_ACCOUNT_TOKEN in its environment, so a shadowing binary earlier
+# in PATH would bypass the validation applied to the claude binary below. System
+# Integrity Protection guarantees this path and prevents overwriting it.
+CAFF_BIN="/usr/bin/caffeinate"
+if [[ ! -x "${CAFF_BIN}" ]]; then
+  log_error "Could not find caffeinate binary at ${CAFF_BIN}"
+  exit 1
+fi
+
 # Find and validate the real claude binary
 CLAUDE_BIN=""
 if ! CLAUDE_BIN="$(find_claude_binary "${WRAPPER_PATH}")"; then
@@ -84,12 +95,12 @@ if secrets_available; then
 fi
 
 if secrets_available; then
-  debug_log "Executing: ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
+  debug_log "Executing: ${CAFF_BIN} -i ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
 else
-  debug_log "Executing: ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
+  debug_log "Executing: ${CAFF_BIN} -i ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
 fi
 if [[ ${#RC_ARGS[@]} -gt 0 ]]; then
-  exec "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
+  exec "${CAFF_BIN}" -i "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
 else
-  exec "${CLAUDE_BIN}" "$@"
+  exec "${CAFF_BIN}" -i "${CLAUDE_BIN}" "$@"
 fi
