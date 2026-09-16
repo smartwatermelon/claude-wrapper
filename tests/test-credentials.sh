@@ -36,7 +36,11 @@ make_stub_dir() {
   stub_dir="$(mktemp -d "${TEST_TMP}/stub.XXXXXX")"
   local bin real_bin
   for bin in "$@"; do
-    real_bin="$(command -v "${bin}" 2>/dev/null || true)"
+    # `command -v` returns the NAME, not a path, when the caller's shell has a
+    # function or alias of that name — a symlink to that string is broken, and
+    # the binary then appears absent inside the stub. `type -P` searches PATH
+    # only, so it always yields a real executable path or nothing.
+    real_bin="$(type -P "${bin}" 2>/dev/null || true)"
     [[ -n "${real_bin}" ]] && ln -s "${real_bin}" "${stub_dir}/${bin}"
   done
   echo "${stub_dir}"
@@ -233,6 +237,102 @@ result="$(
 )"
 assert_equals "recovered-gh-token" "${result}" \
   "sentinel present -> vault lookup still runs (sentinel is not a valid preset)"
+
+# --- Tests: owner-keyed token selection ---
+
+echo ""
+echo "=== owner-keyed token selection ==="
+
+# Builds a git repo whose origin remote is $1, so owner derivation has a real
+# remote to read. `git init -q` is enough — nothing here needs a commit.
+# `git init` output is discarded rather than captured: an init hook or template
+# on the developer's machine can print a banner to stdout, which would
+# otherwise be concatenated onto the directory path this function returns.
+make_repo_with_remote() {
+  local url="$1" dir
+  dir="$(mktemp -d "${TEST_TMP}/repo.XXXXXX")"
+  git -C "${dir}" init -q >/dev/null 2>&1
+  [[ -n "${url}" ]] && git -C "${dir}" remote add origin "${url}" >/dev/null 2>&1
+  printf '%s' "${dir}"
+}
+
+# Resolves the vault ref chosen when the wrapper is sourced from $1. The op
+# stub echoes the ref it was asked for, so the exported GH_TOKEN *is* the ref
+# — which is what these assertions check.
+ref_selected_from() {
+  local dir="$1" stub
+  stub="$(make_stub_dir env bash cat id security timeout git)"
+  cat >"${stub}/op" <<'EOF'
+#!/usr/bin/env bash
+# Echo the requested ref back so the caller can assert on it. `op read REF`
+# puts the ref in $2.
+echo "$2"
+EOF
+  chmod +x "${stub}/op"
+  (
+    cd "${dir}" || exit 1
+    PATH="${stub}" \
+      OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+      bash -c "unset GH_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN:-unset}\"" 2>/dev/null
+  )
+}
+
+# An org remote selects that org's token, not the personal one. This is the
+# regression in #120: a single personal-owner PAT cannot see org repos at all.
+repo_dir="$(make_repo_with_remote "git@github.com:smartwatermelon/claude-wrapper.git")"
+assert_equals "op://Automation/CCCLI-SWM/token" "$(ref_selected_from "${repo_dir}")" \
+  "smartwatermelon remote -> SWM token ref"
+
+repo_dir="$(make_repo_with_remote "git@github.com:nightowlstudiollc/night-owl-studio.git")"
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}")" \
+  "nightowlstudiollc remote -> NOS token ref"
+
+# The personal owner keeps the original ref — it still covers ~33 repos.
+repo_dir="$(make_repo_with_remote "git@github.com:twistedmelonman/something.git")"
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+  "twistedmelonman remote -> personal token ref"
+
+# https remotes must parse identically to scp-style ones.
+repo_dir="$(make_repo_with_remote "https://github.com/smartwatermelon/claude-wrapper.git")"
+assert_equals "op://Automation/CCCLI-SWM/token" "$(ref_selected_from "${repo_dir}")" \
+  "https remote -> same owner as scp-style remote"
+
+# ssh://git@github.com/owner/repo is a valid remote form that a naive
+# scp-style-only pattern does not match.
+repo_dir="$(make_repo_with_remote "ssh://git@github.com/nightowlstudiollc/x.git")"
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}")" \
+  "ssh:// remote form -> owner parsed correctly"
+
+# An unknown org falls back to the personal token rather than guessing. It
+# fails loudly with a permissions error, which beats silently trying a token
+# that cannot work.
+repo_dir="$(make_repo_with_remote "git@github.com:someotherorg/repo.git")"
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+  "unknown owner -> personal token ref (fallback)"
+
+# A non-GitHub remote must yield no owner. A sed-based parser passes its input
+# through unchanged when the pattern does not match, which would put an entire
+# URL where an owner name belongs.
+repo_dir="$(make_repo_with_remote "https://gitlab.com/someone/thing.git")"
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+  "non-GitHub remote -> personal token ref (owner not derivable)"
+
+# A git repo with no origin remote at all.
+repo_dir="$(make_repo_with_remote "")"
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+  "repo without origin remote -> personal token ref"
+
+# Not a git repo — the pre-#120 behavior for sessions launched outside a repo.
+repo_dir="$(mktemp -d "${TEST_TMP}/plain.XXXXXX")"
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+  "non-repo directory -> personal token ref"
+
+# A subdirectory resolves to the enclosing repo's owner, since the wrapper is
+# frequently launched from somewhere below the git root.
+repo_dir="$(make_repo_with_remote "git@github.com:smartwatermelon/claude-wrapper.git")"
+mkdir -p "${repo_dir}/nested/deeper"
+assert_equals "op://Automation/CCCLI-SWM/token" "$(ref_selected_from "${repo_dir}/nested/deeper")" \
+  "subdirectory of a repo -> enclosing repo's owner"
 
 # --- Summary ---
 

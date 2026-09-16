@@ -68,12 +68,26 @@ cat ~/.ssh/id_ed25519_claude_code.pub
 #### GitHub Token
 
 The wrapper fetches `GH_TOKEN` itself at launch, via `lib/credentials.sh`. It
-reads `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain, then resolves
-`op://Automation/GitHub - CCCLI/Token` from the 1Password Automation vault.
-No shell-startup setup is required — if `GH_TOKEN` is already set in your
-environment, the wrapper leaves it alone and skips the vault lookup.
+reads `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain, then resolves a token
+from the 1Password Automation vault. No shell-startup setup is required — if
+`GH_TOKEN` is already set in your environment, the wrapper leaves it alone and
+skips the vault lookup.
 
-The wrapper does not load flat token files or perform per-org token routing.
+Which token it resolves depends on the GitHub owner of the launch directory's
+`origin` remote, because a fine-grained PAT is bound to a single resource owner
+and cannot cover a personal account and two orgs at once:
+
+| Owner | Vault item |
+| ------ | ------- |
+| `smartwatermelon` | `op://Automation/CCCLI-SWM/token` |
+| `nightowlstudiollc` | `op://Automation/CCCLI-NOS/token` |
+| anything else, or not derivable | `op://Automation/GitHub - CCCLI/Token` |
+
+Only one item is read per launch. A directory that is not a git repo, has no
+`origin`, or has a non-GitHub remote falls back to the personal token. Run with
+`CLAUDE_DEBUG=true` to see which owner and vault item were selected.
+
+The wrapper does not load flat token files.
 
 #### 1Password Secrets (Optional)
 
