@@ -175,6 +175,13 @@ assert_equals "" "$([[ -f "${call_log}" ]] && cat "${call_log}" || true)" \
 
 # OP_SERVICE_ACCOUNT_TOKEN available, op read succeeds on first try (with
 # timeout available) -> GH_TOKEN exported, single call.
+#
+# The per-owner vars are preset so _load_owner_gh_tokens takes its already-set
+# path and reads nothing: this assertion counts _load_gh_token's calls, and a
+# shared call log would otherwise attribute all four reads to it. Presetting
+# rather than filtering keeps the count exact instead of merely plausible.
+# They must be set explicitly here — inheriting them from the developer's live
+# environment is what let this pass locally while failing in CI.
 stub_dir="$(make_stub_dir env bash cat id security timeout)"
 call_log="${stub_dir}/op-calls.log"
 cat >"${stub_dir}/op" <<EOF
@@ -186,6 +193,7 @@ chmod +x "${stub_dir}/op"
 result="$(
   PATH="${stub_dir}" \
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN_SWM="preset" GH_TOKEN_NOS="preset" GH_TOKEN_TWM="preset" \
     bash -c "unset GH_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN:-unset}\"" 2>/dev/null
 )"
 assert_equals "vault-gh-token" "${result}" \
