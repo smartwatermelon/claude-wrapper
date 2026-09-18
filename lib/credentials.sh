@@ -136,6 +136,41 @@ _creds_gh_token_ref_for_owner() {
   esac
 }
 
+# Read one vault reference, with bounded retries. Prints the token on stdout
+# and returns 1 if every attempt failed. Callers decide what a failure means;
+# this function never exports anything and never logs the value.
+_creds_read_token_ref() {
+  local token_ref="$1"
+  local token
+  local -a backoff=(2 4 8)
+  local wait_secs
+
+  if "${_CREDS_HAS_TIMEOUT}"; then
+    for wait_secs in "${backoff[@]}"; do
+      token="$(timeout "${wait_secs}" op read "${token_ref}" 2>/dev/null || true)"
+      if [[ -n "${token}" ]]; then
+        printf '%s' "${token}"
+        return 0
+      fi
+      debug_log "op read failed (timeout ${wait_secs}s)"
+    done
+  else
+    # No timeout command available to bound each attempt, so retrying would
+    # only multiply the hang risk (an unbounded op read blocks forever on
+    # the first try, making retries unreachable) with no upside. Attempt
+    # exactly once instead of the usual backoff loop.
+    debug_log "timeout command unavailable, skipping retries (single attempt only)"
+    token="$(op read "${token_ref}" 2>/dev/null || true)"
+    if [[ -n "${token}" ]]; then
+      printf '%s' "${token}"
+      return 0
+    fi
+    debug_log "op read failed (no timeout available)"
+  fi
+
+  return 1
+}
+
 # Fetch GH_TOKEN from Automation vault via service account.
 # Only runs if OP_SERVICE_ACCOUNT_TOKEN is available.
 # GH_TOKEN is the restricted-scope CCCLI PAT, separate from the
@@ -153,40 +188,16 @@ _load_gh_token() {
     return 0
   fi
 
-  local token
-  local -a backoff=(2 4 8)
-  local wait_secs
-  local owner token_ref
+  local token owner token_ref
 
   # ${PWD} is the user's launch directory: bin/claude-wrapper never changes
   # directory before sourcing this file, so the cwd it inherits is the one the
-  # session was started from. One op read per launch, not three — the token is
-  # selected, not accumulated.
+  # session was started from.
   owner="$(_creds_github_owner_for_dir "${PWD}")"
   token_ref="$(_creds_gh_token_ref_for_owner "${owner}")"
   debug_log "GitHub owner: ${owner:-<none>} -> token ref: ${token_ref}"
 
-  if "${_CREDS_HAS_TIMEOUT}"; then
-    for wait_secs in "${backoff[@]}"; do
-      token="$(timeout "${wait_secs}" op read "${token_ref}" 2>/dev/null || true)"
-      if [[ -n "${token}" ]]; then
-        break
-      fi
-      debug_log "op read failed (timeout ${wait_secs}s)"
-    done
-  else
-    # No timeout command available to bound each attempt, so retrying would
-    # only multiply the hang risk (an unbounded op read blocks forever on
-    # the first try, making retries unreachable) with no upside. Attempt
-    # exactly once instead of the usual backoff loop.
-    debug_log "timeout command unavailable, skipping retries (single attempt only)"
-    token="$(op read "${token_ref}" 2>/dev/null || true)"
-    if [[ -z "${token}" ]]; then
-      debug_log "op read failed (no timeout available)"
-    fi
-  fi
-
-  if [[ -n "${token}" ]]; then
+  if token="$(_creds_read_token_ref "${token_ref}")"; then
     export GH_TOKEN="${token}"
     debug_log "GH_TOKEN loaded from Automation vault (${token_ref})"
   else
@@ -204,8 +215,68 @@ _load_gh_token() {
   unset token
 }
 
+# Load every owner's token as GH_TOKEN_<SUFFIX>, so a session can act for an
+# owner other than the one its launch directory happens to name.
+#
+# A fine-grained PAT is bound to one resource owner at creation, so no single
+# token can cover the fleet: reading an org's repos with the personal token
+# fails 403 on protection and 404 on the repo itself, whether that repo is
+# public or private — the boundary is ownership, not visibility. Selecting one
+# token per session (above) therefore guarantees the wrong credential for any
+# cross-owner work, which fleet probes and rollouts are by definition.
+#
+# Fetched once at launch rather than per use. A 42-repo probe would otherwise
+# mean dozens of vault reads, making the correct path slower than the keyring
+# fallback it replaces — which is how workarounds get entrenched.
+#
+# These are additive: GH_TOKEN keeps its launch-directory selection, so nothing
+# that reads it changes. See claude-wrapper#126 for the eventual target, where
+# gh-wrapper.sh selects among these per invocation from the target repo's owner.
+_load_owner_gh_tokens() {
+  if [[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
+    debug_log "Skipping per-owner token fetch: OP_SERVICE_ACCOUNT_TOKEN not available"
+    return 0
+  fi
+
+  local spec var token_ref token loaded=0
+  # var:ref pairs. The refs are the same constants _load_gh_token selects from.
+  local -a specs=(
+    "GH_TOKEN_SWM:${_CREDS_GH_TOKEN_REF_SMARTWATERMELON}"
+    "GH_TOKEN_NOS:${_CREDS_GH_TOKEN_REF_NIGHTOWLSTUDIOLLC}"
+    "GH_TOKEN_TWM:${_CREDS_GH_TOKEN_REF_PERSONAL}"
+  )
+
+  for spec in "${specs[@]}"; do
+    var="${spec%%:*}"
+    token_ref="${spec#*:}"
+
+    # Respect a value already in the environment, matching _load_gh_token.
+    if [[ -n "${!var:-}" && "${!var}" != "${_CREDS_GH_TOKEN_FETCH_FAILED}" ]]; then
+      debug_log "${var} already set, skipping vault lookup"
+      ((loaded += 1))
+      continue
+    fi
+
+    if token="$(_creds_read_token_ref "${token_ref}")"; then
+      export "${var}=${token}"
+      debug_log "${var} loaded from Automation vault (${token_ref})"
+      ((loaded += 1))
+    else
+      # Same fail-closed reasoning as GH_TOKEN: a caller that substitutes an
+      # empty value would fall through to the keyring OAuth token, silently
+      # widening scope. The sentinel makes gh fail with an auth error instead.
+      export "${var}=${_CREDS_GH_TOKEN_FETCH_FAILED}"
+      log_warn "Failed to fetch ${var} from 1Password — cross-owner gh calls for that owner will fail closed"
+    fi
+    unset token
+  done
+
+  debug_log "Per-owner tokens available: ${loaded}/${#specs[@]}"
+}
+
 # =========================================================
 # MAIN
 # =========================================================
 _load_service_account_token
 _load_gh_token
+_load_owner_gh_tokens

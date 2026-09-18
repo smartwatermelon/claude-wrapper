@@ -334,6 +334,136 @@ mkdir -p "${repo_dir}/nested/deeper"
 assert_equals "op://Automation/CCCLI-SWM/token" "$(ref_selected_from "${repo_dir}/nested/deeper")" \
   "subdirectory of a repo -> enclosing repo's owner"
 
+# --- Per-owner token loading (_load_owner_gh_tokens) ---
+#
+# These assert only against the fixed sentinel literal and stub-supplied
+# values. No assertion prints a real credential, and the stub `op` never
+# returns one — a test that must echo a live token to prove itself is the
+# test that leaks it.
+
+# KNOWN-BAD GATE. Before asserting that the three vars get set, prove the
+# assertion can fail: with no OP_SERVICE_ACCOUNT_TOKEN, nothing is exported
+# and op is never called. A suite that only ever sees the success path cannot
+# distinguish "loaded correctly" from "assertion never ran".
+stub_dir="$(make_stub_dir env bash cat id timeout)"
+call_log="${stub_dir}/op-calls.log"
+cat >"${stub_dir}/op" <<EOF
+#!/usr/bin/env bash
+echo "call" >>"${call_log}"
+echo "should-never-be-reached"
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    bash -c "unset OP_SERVICE_ACCOUNT_TOKEN GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM:-unset}/\${GH_TOKEN_NOS:-unset}/\${GH_TOKEN_TWM:-unset}\"" 2>/dev/null
+)"
+assert_equals "unset/unset/unset" "${result}" \
+  "no OP_SERVICE_ACCOUNT_TOKEN -> per-owner tokens not exported"
+assert_equals "" "$([[ -f "${call_log}" ]] && cat "${call_log}" || true)" \
+  "no OP_SERVICE_ACCOUNT_TOKEN -> op never invoked for per-owner tokens"
+
+# All three refs resolve -> all three vars exported, each from its own ref.
+# The stub echoes the ref it was asked for, so a var populated from the wrong
+# ref is visible rather than merely non-empty.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+cat >"${stub_dir}/op" <<'EOF'
+#!/usr/bin/env bash
+# args: read <ref>
+case "$2" in
+  "op://Automation/CCCLI-SWM/token") echo "tok-swm" ;;
+  "op://Automation/CCCLI-NOS/token") echo "tok-nos" ;;
+  "op://Automation/GitHub - CCCLI/Token") echo "tok-twm" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+)"
+assert_equals "tok-swm/tok-nos/tok-twm" "${result}" \
+  "all refs resolve -> each per-owner var loaded from its own ref"
+
+# FAIL-CLOSED PATH. Every ref fails -> each var holds the invalid sentinel,
+# never an empty string. An empty value would let gh fall through to the
+# keyring OAuth token (repo/workflow/admin:org), silently widening scope on a
+# transient vault failure. This is the assertion the export flagged as
+# unverified; it is safe because the sentinel is a fixed literal, not a token.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+cat >"${stub_dir}/op" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+)"
+assert_equals "invalid-cccli-token-vault-fetch-failed/invalid-cccli-token-vault-fetch-failed/invalid-cccli-token-vault-fetch-failed" "${result}" \
+  "all refs fail -> every per-owner var set to the invalid sentinel (fails closed)"
+
+# A partial failure must not poison the refs that did resolve: one bad ref
+# fails closed on its own var only. Mixed outcomes are the realistic vault
+# failure, and the dangerous version is one failure zeroing the others.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+cat >"${stub_dir}/op" <<'EOF'
+#!/usr/bin/env bash
+case "$2" in
+  "op://Automation/CCCLI-NOS/token") exit 1 ;;
+  "op://Automation/CCCLI-SWM/token") echo "tok-swm" ;;
+  "op://Automation/GitHub - CCCLI/Token") echo "tok-twm" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+)"
+assert_equals "tok-swm/invalid-cccli-token-vault-fetch-failed/tok-twm" "${result}" \
+  "one ref fails -> only that var gets the sentinel, others keep their tokens"
+
+# The fail-closed path must warn, so a degraded session is visible. A silent
+# sentinel looks identical to a working token until a gh call fails oddly.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+cat >"${stub_dir}/op" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${stub_dir}/op"
+warn_output="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
+)"
+assert_contains "Failed to fetch GH_TOKEN_SWM from 1Password" "${warn_output}" \
+  "per-owner fetch failure warns rather than failing silently"
+
+# An already-set var is respected and costs no vault read — matching
+# _load_gh_token. The stub exits non-zero, so a lookup would overwrite the
+# pre-set value with the sentinel and fail this assertion.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+call_log="${stub_dir}/op-calls.log"
+cat >"${stub_dir}/op" <<EOF
+#!/usr/bin/env bash
+echo "\$2" >>"${call_log}"
+exit 1
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN_SWM="preset-swm" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}\"" 2>/dev/null
+)"
+assert_equals "preset-swm" "${result}" \
+  "already-set per-owner var is preserved, not overwritten"
+assert_equals "" "$(grep -F "op://Automation/CCCLI-SWM/token" "${call_log}" 2>/dev/null || true)" \
+  "already-set per-owner var -> its ref is never read from the vault"
+
 # --- Summary ---
 
 echo ""
