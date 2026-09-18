@@ -606,10 +606,17 @@ EOF
     [[ -n "${real_bin}" ]] && ln -s "${real_bin}" "${stub_dir}/${bin}"
   done
 
+  # The per-owner vars are preset so _load_owner_gh_tokens takes its
+  # already-set path and reads nothing. This assertion counts _load_gh_token's
+  # attempts, and the call log is shared by everything the sourced file does,
+  # so without this the three per-owner reads are attributed here too. They
+  # must be set explicitly rather than inherited: the developer environment
+  # exports them, which would make this pass locally and fail in CI.
   local debug_output
   debug_output="$(
     PATH="${stub_dir}" \
       OP_SERVICE_ACCOUNT_TOKEN="dummy-token-for-test" \
+      GH_TOKEN_SWM="preset" GH_TOKEN_NOS="preset" GH_TOKEN_TWM="preset" \
       CLAUDE_DEBUG=true \
       bash -c "unset GH_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
   )"
