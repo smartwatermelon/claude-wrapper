@@ -717,7 +717,7 @@ test_mock_integration() {
   # strips the caffeinate prefix too -- the mock is what we want to observe, and
   # holding a sleep assertion during tests would be a side effect.
   local dollar='$'
-  local exec_pattern="exec \"${dollar}{CAFF_BIN}\" -i \"${dollar}{CLAUDE_BIN}\""
+  local exec_pattern="exec \"${dollar}{CAFF_BIN}\" -is \"${dollar}{CLAUDE_BIN}\""
   sed -i.bak "s|${exec_pattern}|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null \
     || sed -i '' "s|${exec_pattern}|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null || {
     echo -e "${YELLOW}⚠${NC} Integration test skipped (sed failed)"
@@ -791,20 +791,20 @@ test_caffeinate_launch() {
     echo -e "${GREEN}✓${NC} caffeinate is not resolved via PATH"
   fi
 
-  # Every exec branch must go through caffeinate with -i, or a session launched
+  # Every exec branch must go through caffeinate with -is, or a session launched
   # down the uncovered branch still lets the system sleep. -i holds the assertion
   # on battery as well; -s is AC-only.
   local total_execs caffeinated_execs
   total_execs="$(grep -cE '^[[:space:]]*exec ' "${WRAPPER}")" || total_execs=0
-  caffeinated_execs="$(grep -cF "exec ${caff_ref} -i ${claude_ref}" "${WRAPPER}")" || caffeinated_execs=0
+  caffeinated_execs="$(grep -cF "exec ${caff_ref} -is ${claude_ref}" "${WRAPPER}")" || caffeinated_execs=0
 
   ((TESTS_RUN += 1))
   if [[ ${caffeinated_execs} -gt 0 ]] && [[ ${caffeinated_execs} -eq ${total_execs} ]]; then
     ((TESTS_PASSED += 1))
-    echo -e "${GREEN}✓${NC} All ${total_execs} exec branches launch via 'caffeinate -i'"
+    echo -e "${GREEN}✓${NC} All ${total_execs} exec branches launch via 'caffeinate -is'"
   else
     ((TESTS_FAILED += 1))
-    echo -e "${RED}✗${NC} Only ${caffeinated_execs} of ${total_execs} exec branches launch via 'caffeinate -i'"
+    echo -e "${RED}✗${NC} Only ${caffeinated_execs} of ${total_execs} exec branches launch via 'caffeinate -is'"
   fi
 }
 
