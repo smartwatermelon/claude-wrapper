@@ -717,7 +717,7 @@ test_mock_integration() {
   # strips the caffeinate prefix too -- the mock is what we want to observe, and
   # holding a sleep assertion during tests would be a side effect.
   local dollar='$'
-  local exec_pattern="exec \"${dollar}{CAFF_BIN}\" -i \"${dollar}{CLAUDE_BIN}\""
+  local exec_pattern="exec \"${dollar}{CAFF_BIN}\" -is \"${dollar}{CLAUDE_BIN}\""
   sed -i.bak "s|${exec_pattern}|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null \
     || sed -i '' "s|${exec_pattern}|exec ${mock_claude}|g" "${test_wrapper}" 2>/dev/null || {
     echo -e "${YELLOW}⚠${NC} Integration test skipped (sed failed)"
