@@ -95,12 +95,12 @@ if secrets_available; then
 fi
 
 if secrets_available; then
-  debug_log "Executing: ${CAFF_BIN} -i ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
+  debug_log "Executing: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
 else
-  debug_log "Executing: ${CAFF_BIN} -i ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
+  debug_log "Executing: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
 fi
 if [[ ${#RC_ARGS[@]} -gt 0 ]]; then
-  exec "${CAFF_BIN}" -i "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
+  exec "${CAFF_BIN}" -is "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
 else
-  exec "${CAFF_BIN}" -i "${CLAUDE_BIN}" "$@"
+  exec "${CAFF_BIN}" -is "${CLAUDE_BIN}" "$@"
 fi
