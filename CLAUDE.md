@@ -52,7 +52,7 @@ The wrapper is a single orchestrator that sources modules in dependency order, t
 8. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
 9. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
 10. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
-11. **`exec`** — replaces the wrapper process with `caffeinate -i <claude>`, applying the remote-control args from step 8
+11. **`exec`** — replaces the wrapper process with `caffeinate -is <claude>`, applying the remote-control args from step 8
 
 ### Module dependency chain
 
@@ -69,7 +69,7 @@ Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` 
 
 #### Sleep prevention
 
-The wrapper execs `claude` through `caffeinate -i`, so the system does not idle-sleep in the middle of a long session (issue #121). `caffeinate` holds the assertion for the duration of the utility it launches and releases it on exit, so nothing leaks between sessions.
+The wrapper execs `claude` through `caffeinate -is`, so the system does not idle-sleep in the middle of a long session (issue #121). `caffeinate` holds the assertion for the duration of the utility it launches and releases it on exit, so nothing leaks between sessions.
 
 `caffeinate` execs the utility in place rather than supervising it: the `claude` process keeps the same PID, TTY, signal disposition, and exit status it would have had without the wrapper. Nothing downstream needs to forward signals or propagate exit codes.
 
