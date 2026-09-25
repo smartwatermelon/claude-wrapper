@@ -14,6 +14,12 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 LIB_DIR="${REPO_ROOT}/lib"
 
+# A suite run from inside a wrapper session inherits the wrapper's marker of
+# vault-filled vars, which would turn every "preset" below into a "leftover"
+# and make the preset assertions measure the developer's session instead of
+# the code. Tests that need the marker set it explicitly.
+unset CLAUDE_WRAPPER_VAULT_VARS
+
 # shellcheck source=tests/lib/op-guard.sh
 source "${TEST_DIR}/lib/op-guard.sh"
 
@@ -245,6 +251,65 @@ result="$(
 )"
 assert_equals "recovered-gh-token" "${result}" \
   "sentinel present -> vault lookup still runs (sentinel is not a valid preset)"
+
+# A GH_TOKEN left over from a previous wrapper run must NOT short-circuit the
+# vault lookup (#126). A session started from a shell that a wrapper had
+# already populated inherited that shell's GH_TOKEN — selected for a different
+# launch directory, or since rotated — and the preset guard treated it as
+# authoritative. The wrapper marks the vars it exported, so it can tell its
+# own leftovers from a caller's deliberate preset.
+#
+# The per-owner vars are preset so only _load_gh_token reads the vault, and so
+# nothing is inherited from the developer's live environment.
+stub_dir="$(make_stub_dir env bash cat id security timeout)"
+cat >"${stub_dir}/op" <<'EOF'
+#!/usr/bin/env bash
+echo "fresh-gh-token"
+EOF
+chmod +x "${stub_dir}/op"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN="stale-gh-token" \
+    CLAUDE_WRAPPER_VAULT_VARS="GH_TOKEN" \
+    GH_TOKEN_SWM="preset" GH_TOKEN_NOS="preset" GH_TOKEN_TWM="preset" \
+    bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN:-unset}\"" 2>/dev/null
+)"
+assert_equals "fresh-gh-token" "${result}" \
+  "GH_TOKEN left by a previous wrapper run -> re-fetched, not trusted"
+
+# The same leftover rule applies to the per-owner vars: a rotated token must
+# not survive into a child session just because a parent wrapper exported it.
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN="preset-gh-token" \
+    GH_TOKEN_SWM="stale-swm" GH_TOKEN_NOS="preset-nos" GH_TOKEN_TWM="preset-twm" \
+    CLAUDE_WRAPPER_VAULT_VARS="GH_TOKEN_SWM" \
+    bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN}/\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+)"
+assert_equals "preset-gh-token/fresh-gh-token/preset-nos/preset-twm" "${result}" \
+  "per-owner var left by a previous wrapper run -> re-fetched; unmarked vars kept"
+
+# Every var the wrapper fetched is recorded in the marker, so a child launch
+# can recognize it. A caller's preset is not recorded: it stays a preset.
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN_NOS="preset-nos" \
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_TWM CLAUDE_WRAPPER_VAULT_VARS; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${CLAUDE_WRAPPER_VAULT_VARS:-unset}\"" 2>/dev/null
+)"
+assert_equals "GH_TOKEN GH_TOKEN_SWM GH_TOKEN_TWM" "${result}" \
+  "marker lists exactly the vars fetched from the vault, not the caller's presets"
+
+# The marker must reach child processes, or a nested launch cannot use it.
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM CLAUDE_WRAPPER_VAULT_VARS; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; bash -c 'echo \"\${CLAUDE_WRAPPER_VAULT_VARS:-unset}\"'" 2>/dev/null
+)"
+assert_equals "GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM" "${result}" \
+  "marker is exported to child processes"
 
 # --- Tests: owner-keyed token selection ---
 

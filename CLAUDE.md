@@ -89,6 +89,8 @@ A fine-grained PAT is bound to exactly one GitHub resource owner at creation and
 
 One `op read` per launch — the token is selected, not accumulated. "Not derivable" covers a non-git directory, a repo with no `origin`, and a non-GitHub remote; all fall back to the personal token, which still covers the `twistedmelonman` repos.
 
+A `GH_TOKEN` already in the environment is honored as a caller preset, unless a parent wrapper put it there. The wrapper lists every var it filled from the vault in `CLAUDE_WRAPPER_VAULT_VARS` (names only), and a nested launch fetches those again instead of inheriting them. Without this, a session started from a shell that a wrapper had populated kept that shell's token, which was chosen for a different launch directory (issue #126).
+
 Cross-owner work in a single session gets the launch directory's token, which will fail with a permissions error against the other owner. That is intentional — it fails loudly rather than silently escalating. `CLAUDE_DEBUG=true` logs the owner and the ref that was selected.
 
 Background: the 2026-09 org migration moved repos out from under the single personal-owner PAT, so `gh` lost access to every org repo while SSH-based git kept working. See issue #120.

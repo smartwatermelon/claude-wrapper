@@ -164,10 +164,15 @@ op read 'op://Automation/GitHub - CCCLI/Token'
 
 If `GH_TOKEN` is already set in your shell environment, the wrapper leaves it
 alone and skips the vault lookup — so a shell-startup export still works, but
-it's no longer required. When you rotate the token in 1Password, the next
-wrapper launch picks it up automatically. The wrapper does not load flat token
-files and does not perform per-org routing — if you need multiple tokens for
-different owners, manage them yourself (e.g., direnv, per-project `.envrc`).
+it's no longer required. A token that a parent wrapper fetched does not count
+as already set: the wrapper lists the vars it filled in
+`CLAUDE_WRAPPER_VAULT_VARS`, and a wrapper launched from inside that session
+fetches them again. So a nested session gets the token for its own launch
+directory, and a rotated token does not survive into child sessions. When you
+rotate the token in 1Password, the next wrapper launch picks it up
+automatically. The wrapper does not load flat token files. It selects
+`GH_TOKEN` by the launch directory's GitHub owner and also loads one token per
+owner as `GH_TOKEN_SWM`, `GH_TOKEN_NOS`, and `GH_TOKEN_TWM`.
 
 ### .gitignore Configuration
 
