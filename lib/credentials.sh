@@ -40,6 +40,21 @@ readonly _CREDS_GH_TOKEN_REF_NIGHTOWLSTUDIOLLC="op://Automation/CCCLI-NOS/token"
 # would re-enable the keyring fallback) and must not be a valid credential.
 readonly _CREDS_GH_TOKEN_FETCH_FAILED="invalid-cccli-token-vault-fetch-failed"
 
+# Names of the token vars this wrapper filled from the vault, space-separated
+# and exported, so a wrapper launched from inside another wrapper's session can
+# tell its parent's leftovers from a caller's deliberate preset (#126).
+#
+# Without it the "already set" guard below cannot tell the two apart. A session
+# started from a shell that a wrapper had populated inherited a GH_TOKEN chosen
+# for a different launch directory, took it as a preset, and never reached the
+# owner lookup: it ran as the wrong owner for its whole life. A rotated token
+# survives into child sessions the same way.
+#
+# Holds names only, never values. A preset GH_TOKEN from a login shell or
+# direnv carries no marker, so it is still honored as documented. To override
+# a token from inside a wrapper session, remove its name from this var too.
+readonly _CREDS_VAULT_MARKER_VAR="CLAUDE_WRAPPER_VAULT_VARS"
+
 # Computed once so both credential-fetch functions below don't each re-run
 # `command -v timeout` on every invocation.
 _CREDS_HAS_TIMEOUT=false
@@ -91,6 +106,23 @@ _load_service_account_token() {
 # =========================================================
 # GITHUB TOKEN
 # =========================================================
+# True when var $1 holds a caller-supplied token that should be kept rather
+# than fetched. Empty and the failure sentinel are not tokens. A value this
+# wrapper's parent fetched (its name is in the marker) is a leftover, not a
+# preset: it was chosen for another launch directory or may since be rotated.
+_creds_token_is_preset() {
+  local var="$1"
+  [[ -n "${!var:-}" && "${!var}" != "${_CREDS_GH_TOKEN_FETCH_FAILED}" ]] || return 1
+  [[ " ${!_CREDS_VAULT_MARKER_VAR:-} " != *" ${var} "* ]]
+}
+
+# Record that var $1 was filled by this wrapper, for any nested launch.
+_creds_mark_vault_var() {
+  local var="$1" marked="${!_CREDS_VAULT_MARKER_VAR:-}"
+  [[ " ${marked} " == *" ${var} "* ]] && return 0
+  export "${_CREDS_VAULT_MARKER_VAR}=${marked:+${marked} }${var}"
+}
+
 # Derive the GitHub resource owner from a directory's origin remote.
 #
 # Prints the owner on stdout, or nothing when it cannot be determined: not a
@@ -177,8 +209,9 @@ _creds_read_token_ref() {
 # personal token in gh's keyring.
 _load_gh_token() {
   # A previously-exported failure sentinel is not a real token: treat it as
-  # unset so a retry can still reach the vault rather than being skipped.
-  if [[ -n "${GH_TOKEN:-}" && "${GH_TOKEN}" != "${_CREDS_GH_TOKEN_FETCH_FAILED}" ]]; then
+  # unset so a retry can still reach the vault rather than being skipped. The
+  # same holds for a GH_TOKEN a parent wrapper fetched (see the marker above).
+  if _creds_token_is_preset GH_TOKEN; then
     debug_log "GH_TOKEN already set, skipping vault lookup"
     return 0
   fi
@@ -199,6 +232,7 @@ _load_gh_token() {
 
   if token="$(_creds_read_token_ref "${token_ref}")"; then
     export GH_TOKEN="${token}"
+    _creds_mark_vault_var GH_TOKEN
     debug_log "GH_TOKEN loaded from Automation vault (${token_ref})"
   else
     # Fail closed. Leaving GH_TOKEN unset makes gh fall back to the user's
@@ -210,6 +244,7 @@ _load_gh_token() {
     # then fails with a clear auth error rather than quietly succeeding with
     # more access than intended.
     export GH_TOKEN="${_CREDS_GH_TOKEN_FETCH_FAILED}"
+    _creds_mark_vault_var GH_TOKEN
     log_warn "Failed to fetch GH_TOKEN from 1Password — gh disabled for this session (keyring fallback deliberately blocked)"
   fi
   unset token
@@ -250,8 +285,9 @@ _load_owner_gh_tokens() {
     var="${spec%%:*}"
     token_ref="${spec#*:}"
 
-    # Respect a value already in the environment, matching _load_gh_token.
-    if [[ -n "${!var:-}" && "${!var}" != "${_CREDS_GH_TOKEN_FETCH_FAILED}" ]]; then
+    # Respect a caller's preset, matching _load_gh_token. A parent wrapper's
+    # leftover is re-fetched instead.
+    if _creds_token_is_preset "${var}"; then
       debug_log "${var} already set, skipping vault lookup"
       ((loaded += 1))
       continue
@@ -259,6 +295,7 @@ _load_owner_gh_tokens() {
 
     if token="$(_creds_read_token_ref "${token_ref}")"; then
       export "${var}=${token}"
+      _creds_mark_vault_var "${var}"
       debug_log "${var} loaded from Automation vault (${token_ref})"
       ((loaded += 1))
     else
@@ -266,6 +303,7 @@ _load_owner_gh_tokens() {
       # empty value would fall through to the keyring OAuth token, silently
       # widening scope. The sentinel makes gh fail with an auth error instead.
       export "${var}=${_CREDS_GH_TOKEN_FETCH_FAILED}"
+      _creds_mark_vault_var "${var}"
       log_warn "Failed to fetch ${var} from 1Password — cross-owner gh calls for that owner will fail closed"
     fi
     unset token

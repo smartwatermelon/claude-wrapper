@@ -71,7 +71,10 @@ The wrapper fetches `GH_TOKEN` itself at launch, via `lib/credentials.sh`. It
 reads `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain, then resolves a token
 from the 1Password Automation vault. No shell-startup setup is required — if
 `GH_TOKEN` is already set in your environment, the wrapper leaves it alone and
-skips the vault lookup.
+skips the vault lookup. The exception is a token a parent wrapper fetched. The
+wrapper lists the vars it filled in `CLAUDE_WRAPPER_VAULT_VARS`, and a nested
+launch fetches those again for its own launch directory rather than inheriting
+them.
 
 Which token it resolves depends on the GitHub owner of the launch directory's
 `origin` remote, because a fine-grained PAT is bound to a single resource owner
