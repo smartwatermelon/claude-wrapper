@@ -24,9 +24,9 @@ There is no test runner script — run individual test files directly. No `npm t
 shellcheck -S info lib/*.sh bin/claude-wrapper tests/*.sh tests/lib/*.sh
 ```
 
-No `--external-sources` flag is needed: the repo-root `.shellcheckrc` sets `external-sources=true` for every run. Lib and test files source each other through variable paths (`${WRAPPER_LIB}/logging.sh`, `${TEST_DIR}/lib/op-guard.sh`), which shellcheck cannot resolve unless external sourcing is enabled — without it, the `# shellcheck source=...` directives at those call sites are ignored and each one raises a false SC1091.
+CI (`standards-check`) runs shellcheck with the canonical config from `smartwatermelon/github-workflows` (`standards/shellcheckrc`: `external-sources=true`, `source-path=SCRIPTDIR`, `disable=SC2310`). To match CI locally, add `--rcfile <path to that file>`. Lib and test files source each other through variable paths (`${WRAPPER_LIB}/logging.sh`, `${TEST_DIR}/lib/op-guard.sh`), which shellcheck cannot resolve unless external sourcing is enabled — without it, the `# shellcheck source=...` directives at those call sites are ignored and each one raises a false SC1091.
 
-Keep that config in the repo rather than relying on a personal `~/.shellcheckrc`. CI (`standards-check`) runs bare `shellcheck -S info` with no flags and no user-level config, so a machine-local rc makes local lint pass while CI fails — see PR #122.
+This repo has no `.shellcheckrc` of its own. A plain local run reads `~/.shellcheckrc` instead, which CI never sees, so use `--rcfile` when the result must match CI — see PR #122.
 
 ### Debug mode
 
@@ -160,8 +160,8 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 *~400 tokens/session saved*
 
-- Run plain `shellcheck -S info <file>`. The repo-root `.shellcheckrc` sets `external-sources=true`, so variable-path sources (`source "${WRAPPER_LIB}/logging.sh"`) resolve and the old `--external-sources` flag is redundant.
-- Do not suppress SC1091 with `--exclude=SC1091` or a `# shellcheck disable` directive — the rc resolves it properly instead of hiding it.
+- Run `shellcheck -S info --rcfile <canonical shellcheckrc> <file>`. The canonical config sets `external-sources=true`, so variable-path sources (`source "${WRAPPER_LIB}/logging.sh"`) resolve.
+- Do not suppress SC1091 with `--exclude=SC1091` or a `# shellcheck disable` directive — the canonical config resolves it properly instead of hiding it.
 - Always run `shellcheck` before committing shell script changes.
 
 ### Git Workflow
