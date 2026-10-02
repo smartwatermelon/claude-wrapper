@@ -178,4 +178,4 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 - Use `bash ~/.claude/scripts/post-push-status.sh <PR_NUM>` to poll CI status; script returns `FINDING source=...` lines
 - `gh pr checks <N> --watch` is an alternative for simpler pass/fail monitoring
-- CI checks include: CodeQL, claude-review, Seer Code Review (Seer may be unreliable/removed)
+- Required CI checks on `main`: `standards-check / run-standards-check` and `shell-tests`. No Claude reviewer runs in CI (retired); `claude.yml` only answers `@claude` mentions
