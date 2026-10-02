@@ -1,9 +1,9 @@
 name: Tests
 
+# Pull requests only: shell-tests is a required check, so main is tested
+# before merge. A push-to-main rerun repeats that run on the same tree.
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
