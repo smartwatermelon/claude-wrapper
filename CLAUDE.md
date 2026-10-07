@@ -84,7 +84,7 @@ The `/reload` skill (in claude-config) restarts the running session in place, fo
 
 1. `run_with_reload` exports `CLAUDE_WRAPPER_PID`, `CLAUDE_WRAPPER_RELOAD_FILE` (a per-wrapper marker under `${XDG_STATE_HOME:-~/.local/state}/claude-wrapper/reload/`), and `CLAUDE_WRAPPER_RELOAD_CMD` (the path to `bin/claude-reload`).
 2. `bin/claude-reload` finds the claude process (the ancestor whose parent is the wrapper), writes `CLAUDE_CODE_SESSION_ID` to the marker, and sends it SIGHUP. If the session has no transcript yet (`/reload` as the first message), it writes `new` instead, because `--resume` of an unwritten session fails with "No conversation found"; the wrapper then starts a fresh session.
-3. When claude exits, the wrapper relaunches only if the marker exists. It drops the original trailing prompt and any `-c`/`--resume`/`--session-id`, then adds `--resume <session-id>` and `CLAUDE_RELOAD_PROMPT` (set it empty to send no prompt).
+3. When claude exits, the wrapper relaunches only if the marker exists. It drops the original prompt and any `-c`/`--resume`/`--session-id`, then adds `--resume <session-id>` and `CLAUDE_RELOAD_PROMPT` (set it empty to send no prompt).
 
 Design choices:
 
