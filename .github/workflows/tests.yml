@@ -32,6 +32,9 @@ jobs:
       - name: Run test-remote-session.sh
         run: bash tests/test-remote-session.sh
 
+      - name: Run test-reload.sh
+        run: bash tests/test-reload.sh
+
       - name: Run test-wrapper.sh
         run: bash tests/test-wrapper.sh
 
@@ -55,7 +58,7 @@ jobs:
         run: |
           shopt -s nullglob
           lib_sh=(lib/*.sh)
-          bin_files=(bin/claude-wrapper)
+          bin_files=(bin/claude-wrapper bin/claude-reload)
           test_sh=(tests/*.sh)
           testlib_sh=(tests/lib/*.sh)
 

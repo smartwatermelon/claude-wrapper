@@ -40,10 +40,10 @@ Enables verbose `DEBUG:` output to stderr from all modules.
 
 ### Execution flow (`bin/claude-wrapper`)
 
-The wrapper is a single orchestrator that sources modules in dependency order, then `exec`s the real binary:
+The wrapper is a single orchestrator that sources modules in dependency order, then launches the real binary:
 
 1. **Resolve own path** — `realpath` to handle symlinks
-2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `launch-dir-check.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
+2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `launch-dir-check.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh` → `reload.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
 3. **Check launch directory** — `check_launch_dir` warns (non-blocking) if CWD is exactly `$HOME` or `$HOME/Developer`, since neither is a git repo and both carry an unrelated accumulated MCP server surface in `~/.claude/.claude.json`
 4. **Locate caffeinate** — hardcoded to `/usr/bin/caffeinate`, checked for executability; hard-fails if absent
 5. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
@@ -52,7 +52,7 @@ The wrapper is a single orchestrator that sources modules in dependency order, t
 8. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
 9. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
 10. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
-11. **`exec`** — replaces the wrapper process with `caffeinate -is <claude>`, applying the remote-control args from step 8
+11. **Launch** — interactive sessions run `caffeinate -is <claude>` under `run_with_reload`, applying the remote-control args from step 8; the wrapper stays alive as claude's parent so `/reload` can restart it. Non-interactive invocations (`--print`, `--version`, subcommands) still `exec`, unchanged
 
 ### Module dependency chain
 
@@ -64,18 +64,35 @@ Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` 
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
 - **`remote-session.sh`** — derives a session name from the git repo basename, injects `--remote-control` for interactive sessions only
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks
+- **`reload.sh`** — `run_with_reload` relaunches claude with `--resume <session-id>` when a session asks to reload. See "Reload" below
 
 `GH_TOKEN` is fetched by `credentials.sh` at wrapper launch, via the service account token loaded from Keychain. Which vault item it reads depends on the launch directory's GitHub owner — see "GitHub token selection" below. This supersedes the previous flat-file `github-token.sh` module, which no longer exists in this repo.
 
 #### Sleep prevention
 
-The wrapper execs `claude` through `caffeinate -is`, so the system does not idle-sleep in the middle of a long session (issue #121). `caffeinate` holds the assertion for the duration of the utility it launches and releases it on exit, so nothing leaks between sessions.
+The wrapper launches `claude` through `caffeinate -is`, so the system does not idle-sleep in the middle of a long session (issue #121). `caffeinate` holds the assertion for the duration of the utility it launches and releases it on exit, so nothing leaks between sessions.
 
-`caffeinate` execs the utility in place rather than supervising it: the `claude` process keeps the same PID, TTY, signal disposition, and exit status it would have had without the wrapper. Nothing downstream needs to forward signals or propagate exit codes.
+`caffeinate` execs the utility in place rather than supervising it (it forks a child to hold the assertion): the `claude` process keeps the same PID, TTY, signal disposition, and exit status it would have had without caffeinate. Nothing downstream needs to forward signals or propagate exit codes.
 
 `CAFF_BIN` is hardcoded to `/usr/bin/caffeinate` rather than resolved with `command -v`. `caffeinate` runs with `GH_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN` in its environment, so a binary of the same name earlier in `$PATH` would receive both — and would bypass the ownership/permission validation that `binary-discovery.sh` applies to the `claude` binary. System Integrity Protection guarantees the `/usr/bin` path and prevents it being replaced.
 
 `-i` (prevent idle sleep) holds on battery as well as AC; `-s` is AC-only.
+
+#### Reload
+
+The `/reload` skill (in claude-config) restarts the running session in place, for example after a hook, skill, MCP, or settings change. The protocol:
+
+1. `run_with_reload` exports `CLAUDE_WRAPPER_PID`, `CLAUDE_WRAPPER_RELOAD_FILE` (a per-wrapper marker under `${XDG_STATE_HOME:-~/.local/state}/claude-wrapper/reload/`), and `CLAUDE_WRAPPER_RELOAD_CMD` (the path to `bin/claude-reload`).
+2. `bin/claude-reload` finds the claude process (the ancestor whose parent is the wrapper), writes `CLAUDE_CODE_SESSION_ID` to the marker, and sends it SIGHUP. If the session has no transcript yet (`/reload` as the first message), it writes `new` instead, because `--resume` of an unwritten session fails with "No conversation found"; the wrapper then starts a fresh session.
+3. When claude exits, the wrapper relaunches only if the marker exists. It drops the original trailing prompt and any `-c`/`--resume`/`--session-id`, then adds `--resume <session-id>` and `CLAUDE_RELOAD_PROMPT` (set it empty to send no prompt).
+
+Design choices:
+
+- **Marker, not exit code.** A crash or a closed terminal leaves no marker, so it never loops. The exit code is not inspected.
+- **Per-wrapper marker.** Concurrent sessions each have their own marker, and `--resume <id>` avoids `-c` picking another session in the same directory.
+- **Nested sessions refuse.** A `claude` process between the requester and the wrapper means a nested session inherited the env; signalling would kill the outer session.
+- **Loop cap.** Three reloads in a row, each within `CLAUDE_RELOAD_MIN_SECONDS` (default 10) of launch, stop the loop.
+- **Unsupported flags.** `-w`/`--worktree`, `--tmux`, `--teleport`, `--cloud`, `--bg`, and `--desktop` would start somewhere new instead of resuming, so the wrapper does not export the reload env for them.
 
 #### GitHub token selection
 

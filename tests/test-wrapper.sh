@@ -806,6 +806,21 @@ test_caffeinate_launch() {
     ((TESTS_FAILED += 1))
     echo -e "${RED}✗${NC} Only ${caffeinated_execs} of ${total_execs} exec branches launch via 'caffeinate -is'"
   fi
+
+  # Interactive sessions launch through the reload loop instead of exec; those
+  # branches need caffeinate just the same
+  local total_loops caffeinated_loops
+  total_loops="$(grep -cE '^[[:space:]]*run_with_reload ' "${WRAPPER}")" || total_loops=0
+  caffeinated_loops="$(grep -cF "run_with_reload ${caff_ref} -is ${claude_ref} --" "${WRAPPER}")" || caffeinated_loops=0
+
+  ((TESTS_RUN += 1))
+  if [[ ${caffeinated_loops} -gt 0 ]] && [[ ${caffeinated_loops} -eq ${total_loops} ]]; then
+    ((TESTS_PASSED += 1))
+    echo -e "${GREEN}✓${NC} All ${total_loops} reload-loop branches launch via 'caffeinate -is'"
+  else
+    ((TESTS_FAILED += 1))
+    echo -e "${RED}✗${NC} Only ${caffeinated_loops} of ${total_loops} reload-loop branches launch via 'caffeinate -is'"
+  fi
 }
 
 # =============================================================================

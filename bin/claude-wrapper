@@ -40,6 +40,9 @@ source "${WRAPPER_LIB}/pre-launch.sh"
 # shellcheck source=lib/remote-session.sh
 source "${WRAPPER_LIB}/remote-session.sh"
 
+# shellcheck source=lib/reload.sh
+source "${WRAPPER_LIB}/reload.sh"
+
 # Warn (non-blocking) if launched from $HOME or $HOME/Developer exactly
 check_launch_dir
 
@@ -95,12 +98,19 @@ if secrets_available; then
 fi
 
 if secrets_available; then
-  debug_log "Executing: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
+  debug_log "Launching: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args] with secrets loaded"
 else
-  debug_log "Executing: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
+  debug_log "Launching: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} rc args + ${#} args]"
 fi
+
+# Interactive sessions run under the reload loop, so /reload can restart claude
+# in place (lib/reload.sh). The wrapper stays alive as claude's parent instead of
+# exec-ing, but caffeinate still execs claude in place, so claude keeps its own
+# PID, TTY, and signal disposition.
 if [[ ${#RC_ARGS[@]} -gt 0 ]]; then
-  exec "${CAFF_BIN}" -is "${CLAUDE_BIN}" "${RC_ARGS[@]}" "$@"
+  run_with_reload "${CAFF_BIN}" -is "${CLAUDE_BIN}" -- "${RC_ARGS[@]}" "$@"
+elif is_interactive_session "$@"; then
+  run_with_reload "${CAFF_BIN}" -is "${CLAUDE_BIN}" -- "$@"
 else
   exec "${CAFF_BIN}" -is "${CLAUDE_BIN}" "$@"
 fi

@@ -5,6 +5,7 @@ Custom wrapper for Claude Code CLI with identity management and 1Password secret
 ## Features
 
 - **Auto Remote Control**: Every interactive session is automatically named and accessible from claude.ai/code and the Claude mobile app
+- **In-place reload**: `/reload` (a claude-config skill) restarts the running session and resumes it, so hook, skill, MCP, and settings changes take effect without retyping context. See `CLAUDE.md` ("Reload")
 - **Git Identity Management**: Separate git identity for Claude Code operations
 - **SSH Key Isolation**: Dedicated SSH key for Claude git operations
 - **GitHub Token Management**: Separate GitHub CLI token

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# claude-reload - ask claude-wrapper to restart this session in place.
+# The /reload skill runs it. See CLAUDE.md, "Reload".
+
+fail() {
+  echo "claude-reload: $*" >&2
+  exit 1
+}
+
+wrapper_pid="${CLAUDE_WRAPPER_PID:-}"
+marker="${CLAUDE_WRAPPER_RELOAD_FILE:-}"
+if [[ -z "${wrapper_pid}" || -z "${marker}" ]]; then
+  fail "this session was not started by claude-wrapper with reload enabled, so it cannot restart itself. Exit and relaunch claude manually."
+fi
+[[ "${wrapper_pid}" =~ ^[0-9]+$ ]] || fail "CLAUDE_WRAPPER_PID is not a PID: ${wrapper_pid}"
+
+# Find claude: the ancestor whose parent is the wrapper. A claude between us
+# and it is a nested session; refuse.
+claude_pid=""
+pid=$$
+while [[ "${pid}" -gt 1 ]]; do
+  ppid="$(ps -o ppid= -p "${pid}" | tr -d ' ')" || ppid=""
+  [[ -n "${ppid}" ]] || break
+  if [[ "${ppid}" == "${wrapper_pid}" ]]; then
+    claude_pid="${pid}"
+    break
+  fi
+  comm="$(ps -o comm= -p "${pid}")" || comm=""
+  if [[ "${pid}" != "$$" && "$(basename -- "${comm}")" == "claude" ]]; then
+    fail "nested claude session (PID ${pid}) inherited another session's wrapper; refusing to restart the outer session."
+  fi
+  pid="${ppid}"
+done
+[[ -n "${claude_pid}" ]] || fail "could not find the claude process under wrapper PID ${wrapper_pid}."
+
+session_id="${CLAUDE_CODE_SESSION_ID:-}"
+if [[ -z "${session_id}" ]]; then
+  echo "claude-reload: CLAUDE_CODE_SESSION_ID is unset; the wrapper will use --continue." >&2
+else
+  # --resume fails on a session with no transcript, so ask for a fresh one
+  transcripts=("${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects/"*/"${session_id}.jsonl")
+  if [[ ! -f "${transcripts[0]}" ]]; then
+    echo "No transcript yet for this session; starting a fresh one."
+    session_id="new"
+  fi
+fi
+
+umask 077
+printf '%s\n' "${session_id}" >"${marker}"
+echo "Restarting Claude Code (PID ${claude_pid})..."
+kill -HUP "${claude_pid}"
