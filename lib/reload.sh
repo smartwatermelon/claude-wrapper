@@ -2,19 +2,23 @@
 # reload.sh - relaunch claude when /reload asks (see CLAUDE.md, "Reload")
 # Requires: lib/logging.sh must be sourced first
 
-# Flags that take a value, from `claude --help` (2.1.293). An arg after one is
-# its value, not a prompt.
+# Flags that take one value, from `claude --help` (2.1.293). The arg after one
+# is its value, not a prompt.
 _RELOAD_VALUE_FLAGS=(
-  --add-dir --agent --agents --allowedTools --allowed-tools
-  --append-system-prompt --append-system-prompt-file --autocompact --betas
-  --cloud -d --debug --debug-file --disallowedTools --disallowed-tools --effort
-  --environment --fallback-model --file --from-pr --input-format --json-schema
-  --max-budget-usd --mcp-config --model -n --name --output-format
-  --permission-mode --permission-prompts --plugin-dir --plugin-url
-  --prompt-suggestions --remote-control --remote-control-session-name-prefix
-  -r --resume --session-id --setting-sources --settings --system-prompt
-  --system-prompt-file --system-prompt-snapshot --teleport --tools -w
-  --worktree
+  --agent --agents --append-system-prompt --append-system-prompt-file
+  --autocompact --cloud -d --debug --debug-file --effort --environment
+  --fallback-model --from-pr --input-format --json-schema --max-budget-usd
+  --model -n --name --output-format --permission-mode --permission-prompts
+  --plugin-dir --plugin-url --prompt-suggestions --remote-control
+  --remote-control-session-name-prefix -r --resume --session-id
+  --setting-sources --settings --system-prompt --system-prompt-file
+  --system-prompt-snapshot --teleport -w --worktree
+)
+
+# Variadic flags (`<x...>` in --help): every non-flag arg after one is a value
+_RELOAD_VARIADIC_FLAGS=(
+  --add-dir --allowedTools --allowed-tools --betas --disallowedTools
+  --disallowed-tools --file --mcp-config --tools
 )
 
 # A relaunch with these starts somewhere new instead of resuming, so they get
@@ -23,10 +27,11 @@ _RELOAD_UNSUPPORTED_FLAGS=(
   -w --worktree --tmux --teleport --cloud --bg --background --desktop
 )
 
-_reload_is_value_flag() {
-  local candidate="$1" flag
-  for flag in "${_RELOAD_VALUE_FLAGS[@]}"; do
-    [[ "${candidate}" == "${flag}" ]] && return 0
+_reload_in_list() {
+  local candidate="$1" item
+  shift
+  for item in "$@"; do
+    [[ "${candidate}" == "${item}" ]] && return 0
   done
   return 1
 }
@@ -44,35 +49,38 @@ reload_supported() {
   return 0
 }
 
-# Sets RELOAD_BASE_ARGS: the args minus the trailing prompt and resume flags.
-# A global array, so values with newlines survive.
+# Sets RELOAD_BASE_ARGS: the args minus prompts and resume flags. A global
+# array, so values with newlines survive.
 reload_base_args() {
-  local -a args=("$@")
-  local count=${#args[@]}
-
-  # The last arg is a prompt unless it is a flag or a flag's value
-  if [[ ${count} -gt 0 ]]; then
-    local last="${args[count - 1]}"
-    local prev=""
-    [[ ${count} -gt 1 ]] && prev="${args[count - 2]}"
-    if [[ "${last}" != -* ]] && ! _reload_is_value_flag "${prev}"; then
-      unset 'args[count - 1]'
-    fi
-  fi
-
   RELOAD_BASE_ARGS=()
-  local skip_value=0 arg
-  for arg in "${args[@]}"; do
-    if [[ ${skip_value} -eq 1 ]]; then
-      skip_value=0
-      # Optional-value flags (-r, --resume) only consume a non-flag next arg
-      [[ "${arg}" != -* ]] && continue
+  # mode: what a following non-flag arg is -- none (a prompt), one, many, drop
+  local mode="none" arg
+  for arg in "$@"; do
+    if [[ "${arg}" != -* ]]; then
+      case "${mode}" in
+        one)
+          RELOAD_BASE_ARGS+=("${arg}")
+          mode="none"
+          ;;
+        many) RELOAD_BASE_ARGS+=("${arg}") ;;
+        drop) mode="none" ;; # the old --resume/--session-id value
+        *) ;;                # none: a prompt, already sent once
+      esac
+      continue
     fi
+
+    mode="none"
     case "${arg}" in
-      -c | --continue | --fork-session) ;;
-      -r | --resume | --session-id) skip_value=1 ;;
-      --resume=* | --session-id=*) ;;
-      *) RELOAD_BASE_ARGS+=("${arg}") ;;
+      -c | --continue | --fork-session | --resume=* | --session-id=*) ;;
+      -r | --resume | --session-id) mode="drop" ;;
+      *)
+        RELOAD_BASE_ARGS+=("${arg}")
+        if _reload_in_list "${arg}" "${_RELOAD_VARIADIC_FLAGS[@]}"; then
+          mode="many"
+        elif _reload_in_list "${arg}" "${_RELOAD_VALUE_FLAGS[@]}"; then
+          mode="one"
+        fi
+        ;;
     esac
   done
 }

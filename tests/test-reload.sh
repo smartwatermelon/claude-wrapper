@@ -124,6 +124,12 @@ check_base_args "drops a bare --resume without eating the next flag" \
   --model opus -- --resume --model opus
 check_base_args "drops --resume=<id> and --fork-session" \
   --verbose -- --resume=abc --fork-session --verbose
+check_base_args "drops a prompt between flags" \
+  --verbose --model opus -- --verbose "do X" --model opus
+check_base_args "keeps every value of a variadic flag" \
+  --add-dir /a /b -- --add-dir /a /b
+check_base_args "a flag ends a variadic list, so a later prompt is dropped" \
+  --add-dir /a /b --verbose -- --add-dir /a /b --verbose "do X"
 
 nl_value="line one
 line two"
