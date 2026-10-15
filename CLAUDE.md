@@ -14,6 +14,7 @@ A Bash wrapper around the Claude Code CLI (`claude`) that intercepts invocations
 bash tests/test-wrapper.sh
 bash tests/test-gh-token-permissions.sh
 bash tests/test-remote-session.sh
+bash tests/test-machine-settings.sh
 ```
 
 There is no test runner script — run individual test files directly. No `npm test` or `make test`.
@@ -43,16 +44,16 @@ Enables verbose `DEBUG:` output to stderr from all modules.
 The wrapper is a single orchestrator that sources modules in dependency order, then `exec`s the real binary:
 
 1. **Resolve own path** — `realpath` to handle symlinks
-2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `launch-dir-check.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
+2. **Source libs** — `logging.sh` → `permissions.sh` → `path-security.sh` → `launch-dir-check.sh` → `git-identity.sh` → `credentials.sh` → `secrets-loader.sh` → `binary-discovery.sh` → `pre-launch.sh` → `remote-session.sh` → `machine-settings.sh`. Sourcing `credentials.sh` has the side effect of fetching `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain and `GH_TOKEN` from the 1Password Automation vault (see below).
 3. **Check launch directory** — `check_launch_dir` warns (non-blocking) if CWD is exactly `$HOME` or `$HOME/Developer`, since neither is a git repo and both carry an unrelated accumulated MCP server surface in `~/.claude/.claude.json`
 4. **Locate caffeinate** — hardcoded to `/usr/bin/caffeinate`, checked for executability; hard-fails if absent
 5. **Find real claude binary** — scans `$PATH` for `claude`, skipping itself (the wrapper)
 6. **Validate binary** — ownership and permission checks on the discovered binary
 7. **Initialize secrets loader** — `init_secrets_loader` discovers per-project secrets files and authenticates if needed
-8. **Build remote-control args** — `build_remote_control_args` computes `--remote-control <session-name>` for interactive sessions (applied later, at exec)
+8. **Build injected args** — `build_remote_control_args` computes `--remote-control <session-name>`, then `build_machine_settings_args` adds `--settings <machine file>`, both for interactive sessions only (applied later, at exec)
 9. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
 10. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
-11. **`exec`** — replaces the wrapper process with `caffeinate -is <claude>`, applying the remote-control args from step 8
+11. **`exec`** — replaces the wrapper process with `caffeinate -is <claude>`, applying the injected args from step 8
 
 ### Module dependency chain
 
@@ -63,6 +64,7 @@ Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` 
 - **`launch-dir-check.sh`** — `check_launch_dir` warns to stderr (never blocks) when CWD is exactly `$HOME` or `$HOME/Developer` — not subdirectories, which are legitimate git repos — since per-project secrets/pre-launch hooks are skipped there and an unrelated MCP server surface from `~/.claude/.claude.json` loads instead; recommends `--add-dir` for multi-repo work
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
 - **`remote-session.sh`** — derives a session name from the git repo basename, injects `--remote-control` for interactive sessions only
+- **`machine-settings.sh`** — passes `~/.config/claude-code/machine-settings.json` (or `$CLAUDE_MACHINE_SETTINGS`) with `--settings` for interactive sessions, so one machine can enable what the git-shared `~/.claude/settings.json` does not; skips (warns, never blocks) a file not owned by the user, writable by group/others, or not a JSON object, and defers to a `--settings` already on the command line. Depends on `is_interactive_session` from `remote-session.sh`
 - **`pre-launch.sh`** — runs a per-project hook (`.claude/pre-launch.sh`) with symlink rejection and path-containment checks
 
 `GH_TOKEN` is fetched by `credentials.sh` at wrapper launch, via the service account token loaded from Keychain. Which vault item it reads depends on the launch directory's GitHub owner — see "GitHub token selection" below. This supersedes the previous flat-file `github-token.sh` module, which no longer exists in this repo.

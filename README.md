@@ -170,6 +170,21 @@ Remote control is skipped automatically for non-interactive invocations: `--prin
 
 > **Requirements**: Claude Code v2.1.51+, claude.ai authentication (not API key), Pro/Max/Team/Enterprise plan.
 
+### Per-Machine Settings
+
+`~/.claude/settings.json` is shared across machines, and Claude Code has no user-level `settings.local.json`. For a setting only some machines need (a plugin, for example), put it in `~/.config/claude-code/machine-settings.json` on those machines. The wrapper passes that file with `--settings`, and Claude Code merges it over the shared settings: `enabledPlugins` merges key by key, so the shared plugins stay enabled.
+
+```json
+{ "enabledPlugins": { "cloudflare@cloudflare": true } }
+```
+
+A plugin from a marketplace the shared file does not list also needs that marketplace on the machine, once: `claude plugin marketplace add cloudflare/skills`. That is recorded in the machine's own plugin state, not in `settings.json`. (Whether `extraKnownMarketplaces` in this file merges with the shared one has not been measured; `enabledPlugins` has.)
+
+- Interactive sessions only, the same rule as remote control. `-p`, subcommands and scripts see the shared settings alone.
+- Skipped if `--settings` is already on the command line.
+- Skipped with a warning, never blocking the launch, if the file is not owned by you, is writable by group or others, or is not a JSON object.
+- `CLAUDE_MACHINE_SETTINGS=/path/to/file` uses another file.
+
 ## Documentation
 
 - **[SECRETS.md](docs/SECRETS.md)**: Comprehensive 1Password integration guide
@@ -197,6 +212,7 @@ Remote control is skipped automatically for non-interactive invocations: `--prin
 # Run all automated tests
 ./tests/test-wrapper.sh
 ./tests/test-remote-session.sh
+./tests/test-machine-settings.sh
 
 # Run with verbose output
 VERBOSE=true ./tests/test-wrapper.sh
@@ -216,13 +232,15 @@ claude-wrapper/
 │   ├── secrets-loader.sh       # 1Password integration
 │   ├── binary-discovery.sh     # Claude binary search/validation
 │   ├── pre-launch.sh           # Project-specific pre-launch hooks
-│   └── remote-session.sh       # Automatic remote control session naming
+│   ├── remote-session.sh       # Automatic remote control session naming
+│   └── machine-settings.sh     # Per-machine --settings layered on shared settings
 ├── docs/
 │   ├── SECRETS.md              # 1Password documentation
 │   └── SECURITY.md             # Security hardening documentation
 ├── tests/
 │   ├── test-wrapper.sh         # Test suite
 │   ├── test-remote-session.sh  # Remote session module tests
+│   ├── test-machine-settings.sh # Machine settings module tests
 │   └── README.md               # Test documentation
 ├── .claude/                    # Project-specific Claude config
 ├── .gitignore
