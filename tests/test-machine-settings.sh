@@ -69,6 +69,12 @@ assert_equals "--settings ${FILE} rc=0" "$(run_build)" \
 assert_equals "--settings ${FILE} rc=0" "$(run_build --continue)" \
   "interactive with flags: --settings <file>"
 
+assert_equals "--settings ${FILE} rc=0" "$(run_build "fix the deploy")" \
+  "initial prompt: --settings <file>"
+
+assert_equals "--settings ${FILE} rc=0" "$(run_build --rc)" \
+  "--rc on the command line: --settings <file>"
+
 assert_equals " rc=1" "$(run_build -p "hello")" \
   "print mode: nothing added"
 
