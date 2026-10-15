@@ -22,7 +22,7 @@ get_remote_session_name() {
 #   --version            : version check
 #   --help / -h          : help output
 #   --no-session-persistence: focused analysis task (scripts, CI)
-#   One-word positional before any flag: subcommand (mcp); with whitespace it is a prompt
+#   One-word positional before any flag: subcommand (mcp); a prompt has whitespace or a leading /
 is_interactive_session() {
   local found_double_dash=0
   local saw_flag=0
@@ -51,7 +51,7 @@ is_interactive_session() {
         # Bare positional arg: only a subcommand when it precedes all flags.
         # Subcommands (remote-control, mcp, etc.) always come before flags.
         # Flag values (e.g. the "hello" in -c "hello") always follow their flag.
-        if [[ "${saw_flag}" -eq 0 && "${arg}" != *[[:space:]]* ]]; then
+        if [[ "${saw_flag}" -eq 0 && "${arg}" != *[[:space:]]* && "${arg}" != /* ]]; then
           return 1
         fi
         ;;

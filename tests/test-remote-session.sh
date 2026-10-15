@@ -132,6 +132,9 @@ assert_true "$(run_is_interactive "fix the deploy" --model opus)" \
 assert_false "$(run_is_interactive "fix the deploy" -p)" \
   "initial prompt with -p → non-interactive"
 
+assert_true "$(run_is_interactive /receive-handoff)" \
+  "slash command as the prompt → interactive"
+
 assert_false "$(run_is_interactive hi)" \
   "one-word positional → treated as a subcommand (cannot tell)"
 

@@ -72,6 +72,9 @@ assert_equals "--settings ${FILE} rc=0" "$(run_build --continue)" \
 assert_equals "--settings ${FILE} rc=0" "$(run_build "fix the deploy")" \
   "initial prompt: --settings <file>"
 
+assert_equals "--settings ${FILE} rc=0" "$(run_build /receive-handoff)" \
+  "slash-command prompt: --settings <file>"
+
 assert_equals "--settings ${FILE} rc=0" "$(run_build --rc)" \
   "--rc on the command line: --settings <file>"
 
