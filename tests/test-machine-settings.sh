@@ -96,14 +96,25 @@ chmod 600 "${FILE}"
 assert_equals "--settings ${FILE} rc=0" "$(run_build)" \
   "mode 600: used"
 
-if command -v jq >/dev/null 2>&1; then
-  printf '{"enabledPlugins": \n' >"${FILE}"
-  assert_equals " rc=1" "$(run_build)" \
-    "invalid JSON: skipped"
-  printf '[1, 2]\n' >"${FILE}"
-  assert_equals " rc=1" "$(run_build)" \
-    "JSON that is not an object: skipped"
-fi
+printf '{"enabledPlugins": \n' >"${FILE}"
+assert_equals " rc=1" "$(run_build)" \
+  "invalid JSON: skipped"
+printf '[1, 2]\n' >"${FILE}"
+assert_equals " rc=1" "$(run_build)" \
+  "JSON that is not an object: skipped"
+
+# A PATH with the tools the earlier checks need, but no jq.
+NOJQ="${TMP}/nojq-bin"
+mkdir -p "${NOJQ}"
+for tool in stat id tr; do
+  ln -s "$(command -v "${tool}")" "${NOJQ}/${tool}"
+done
+printf '{}\n' >"${FILE}"
+WARN="$(PATH="${NOJQ}" build_machine_settings_args 2>&1 >/dev/null || true)"
+assert_equals " rc=1" "$(PATH="${NOJQ}" run_build)" \
+  "no jq on PATH: skipped, not passed unchecked"
+assert_equals "1" "$(grep -c 'jq not found' <<<"${WARN}" || true)" \
+  "no jq on PATH: skipped by the jq check, not an earlier one"
 
 OTHER="${TMP}/other.json"
 printf '{}\n' >"${OTHER}"

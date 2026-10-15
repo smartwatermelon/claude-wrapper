@@ -39,8 +39,12 @@ build_machine_settings_args() {
     return 1
   fi
 
-  # Invalid JSON would stop claude from starting; skip it instead.
-  if command -v jq >/dev/null 2>&1 && ! jq -e 'type == "object"' "${file}" >/dev/null 2>&1; then
+  # Invalid JSON would stop claude from starting; skip it instead, and skip it unchecked without jq.
+  if ! command -v jq >/dev/null 2>&1; then
+    log_warn "jq not found, so ${file} cannot be checked; skipping machine settings"
+    return 1
+  fi
+  if ! jq -e 'type == "object"' "${file}" >/dev/null 2>&1; then
     log_warn "${file} is not a JSON object; skipping machine settings"
     return 1
   fi
