@@ -90,11 +90,11 @@ assert_false "$(run_is_interactive --help)" \
 assert_false "$(run_is_interactive -h)" \
   "-h → non-interactive"
 
-assert_false "$(run_is_interactive --remote-control)" \
-  "--remote-control already present → skip injection"
+assert_true "$(run_is_interactive --remote-control)" \
+  "--remote-control → still interactive (build_remote_control_args skips it)"
 
-assert_false "$(run_is_interactive --rc)" \
-  "--rc already present → skip injection"
+assert_true "$(run_is_interactive --rc)" \
+  "--rc → still interactive (build_remote_control_args skips it)"
 
 assert_false "$(run_is_interactive --no-session-persistence)" \
   "--no-session-persistence (focused analysis task) → non-interactive"
@@ -122,6 +122,21 @@ assert_true "$(run_is_interactive --resume abc123)" \
 
 assert_false "$(run_is_interactive remote-control --verbose)" \
   "subcommand before flags → non-interactive"
+
+assert_true "$(run_is_interactive "fix the deploy")" \
+  "initial prompt (has whitespace) → interactive"
+
+assert_true "$(run_is_interactive "fix the deploy" --model opus)" \
+  "initial prompt then flags → interactive"
+
+assert_false "$(run_is_interactive "fix the deploy" -p)" \
+  "initial prompt with -p → non-interactive"
+
+assert_true "$(run_is_interactive /receive-handoff)" \
+  "slash command as the prompt → interactive"
+
+assert_false "$(run_is_interactive hi)" \
+  "one-word positional → treated as a subcommand (cannot tell)"
 
 # --- Tests: get_remote_session_name ---
 
@@ -167,6 +182,14 @@ assert_equals "" "${OUTPUT}" \
 OUTPUT="$(build_remote_control_args --remote-control || true)"
 assert_equals "" "${OUTPUT}" \
   "--remote-control already present: no output"
+
+OUTPUT="$(build_remote_control_args --rc || true)"
+assert_equals "" "${OUTPUT}" \
+  "--rc already present: no output"
+
+OUTPUT="$(build_remote_control_args "fix the deploy" || true)"
+assert_equals "--remote-control" "$(head -1 <<<"${OUTPUT}")" \
+  "initial prompt: remote control injected"
 
 # --- Summary ---
 

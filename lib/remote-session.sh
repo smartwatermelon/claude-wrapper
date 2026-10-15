@@ -21,9 +21,8 @@ get_remote_session_name() {
 #   --print / -p         : print mode
 #   --version            : version check
 #   --help / -h          : help output
-#   --remote-control/--rc: already has remote control
 #   --no-session-persistence: focused analysis task (scripts, CI)
-#   Any positional arg   : subcommand (e.g. remote-control, mcp, help, update)
+#   One-word positional before any flag: subcommand (mcp); a prompt has whitespace or a leading /
 is_interactive_session() {
   local found_double_dash=0
   local saw_flag=0
@@ -41,9 +40,6 @@ is_interactive_session() {
       --print | -p | --version | --help | -h)
         return 1
         ;;
-      --remote-control | --rc)
-        return 1
-        ;;
       --no-session-persistence)
         return 1
         ;;
@@ -55,7 +51,7 @@ is_interactive_session() {
         # Bare positional arg: only a subcommand when it precedes all flags.
         # Subcommands (remote-control, mcp, etc.) always come before flags.
         # Flag values (e.g. the "hello" in -c "hello") always follow their flag.
-        if [[ "${saw_flag}" -eq 0 ]]; then
+        if [[ "${saw_flag}" -eq 0 && "${arg}" != *[[:space:]]* && "${arg}" != /* ]]; then
           return 1
         fi
         ;;
@@ -79,6 +75,14 @@ build_remote_control_args() {
     debug_log "Non-interactive invocation detected, skipping remote control injection"
     return 1
   fi
+
+  local arg
+  for arg in "$@"; do
+    if [[ "${arg}" == "--remote-control" || "${arg}" == "--rc" ]]; then
+      debug_log "Remote control already on the command line, not injecting"
+      return 1
+    fi
+  done
 
   local session_name
   session_name="$(get_remote_session_name)"
