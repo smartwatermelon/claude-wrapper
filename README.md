@@ -178,12 +178,39 @@ Remote control is skipped automatically for non-interactive invocations: `--prin
 { "enabledPlugins": { "cloudflare@cloudflare": true } }
 ```
 
-A plugin from a marketplace the shared file does not list also needs that marketplace on the machine, once: `claude plugin marketplace add cloudflare/skills`. That is recorded in the machine's own plugin state, not in `settings.json`. (Whether `extraKnownMarketplaces` in this file merges with the shared one has not been measured; `enabledPlugins` has.)
+A plugin from a marketplace not listed in the shared file also needs that marketplace on the machine once: `claude plugin marketplace add cloudflare/skills`. That is recorded in the machine's own plugin state, not in `settings.json`.
+
+How Claude Code merges a `--settings` file over `~/.claude/settings.json`, measured with Claude Code 2.1.305 on 2026-10-20:
+
+- **Objects merge by key.** An `env` var set in `settings.json` survived an `env` block in the `--settings` file, and `enabledPlugins` merges plugin by plugin. (`extraKnownMarketplaces` is an object too, but was not measured on its own.)
+- **Arrays concatenate.** The same 25-entry `autoMode.environment` in both files gave 50 entries. Put an array in one file only, or its entries double.
+- **`--settings` does not stack.** With two `--settings` flags, only the last applies. This is why the wrapper adds none when one is already on the command line.
+- **`autoMode` is honored from `--settings`.** The auto mode classifier reads `autoMode` only from `~/.claude/settings.json`, managed settings, and `--settings`, so the machine file is a valid place for it.
 
 - Interactive sessions only, the same rule as remote control. `-p`, subcommands and scripts see the shared settings alone.
 - Skipped if `--settings` is already on the command line.
 - Skipped with a warning, never blocking the launch, if the file is not owned by you, is writable by group or others, or is not a JSON object.
 - `CLAUDE_MACHINE_SETTINGS=/path/to/file` uses another file.
+
+### claude-wrapper-lite
+
+`bin/claude-wrapper-lite` is a second entry point for a machine that should get the per-machine settings and nothing else from this repo. It uses the same `lib/machine-settings.sh`, so the rules above apply unchanged.
+
+What it does:
+
+- Finds the real `claude` on `PATH` (or a known install location), skipping itself, and validates its owner and permissions, the same way the full wrapper does.
+- Adds `--settings ~/.config/claude-code/machine-settings.json` under the rules above.
+- Execs `claude` through `/usr/bin/caffeinate -is`, so the system does not idle-sleep during a session.
+
+What it does not do: load 1Password or Keychain secrets, set `GH_TOKEN`, set a git identity or SSH key, add `--remote-control`, warn about the launch directory, or run a project's `.claude/pre-launch.sh`.
+
+Install it under its own name, not as `claude`:
+
+```bash
+ln -s /path/to/claude-wrapper/bin/claude-wrapper-lite ~/.local/bin/claude-wrapper-lite
+```
+
+It execs the first `claude` it finds that is not itself. Use it on a machine where the full wrapper is not installed as `claude`; where it is, lite finds the full wrapper and runs that.
 
 ## Documentation
 
@@ -213,6 +240,7 @@ A plugin from a marketplace the shared file does not list also needs that market
 ./tests/test-wrapper.sh
 ./tests/test-remote-session.sh
 ./tests/test-machine-settings.sh
+./tests/test-claude-wrapper-lite.sh
 
 # Run with verbose output
 VERBOSE=true ./tests/test-wrapper.sh
@@ -223,7 +251,8 @@ VERBOSE=true ./tests/test-wrapper.sh
 ```
 claude-wrapper/
 ├── bin/
-│   └── claude-wrapper          # Main entry point (orchestrates modules)
+│   ├── claude-wrapper          # Main entry point (orchestrates modules)
+│   └── claude-wrapper-lite     # Machine settings only (no secrets or identity)
 ├── lib/
 │   ├── logging.sh              # Debug/error/warning logging
 │   ├── permissions.sh          # File permission validation
@@ -241,6 +270,7 @@ claude-wrapper/
 │   ├── test-wrapper.sh         # Test suite
 │   ├── test-remote-session.sh  # Remote session module tests
 │   ├── test-machine-settings.sh # Machine settings module tests
+│   ├── test-claude-wrapper-lite.sh # Lite entry point tests
 │   └── README.md               # Test documentation
 ├── .claude/                    # Project-specific Claude config
 ├── .gitignore

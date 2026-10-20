@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Claude Code lite launcher: machine settings only, via lib/machine-settings.sh
+# No secrets, git identity, remote control, or pre-launch hook.
+
+# Determine library path relative to this script (resolve symlinks first)
+WRAPPER_PATH="$(realpath "${BASH_SOURCE[0]}")"
+WRAPPER_DIR="$(dirname "${WRAPPER_PATH}")"
+WRAPPER_LIB="${WRAPPER_DIR}/../lib"
+
+# Only modules that define functions; none of these fetch secrets or set identity
+# shellcheck source=lib/logging.sh
+source "${WRAPPER_LIB}/logging.sh"
+
+# shellcheck source=lib/permissions.sh
+source "${WRAPPER_LIB}/permissions.sh"
+
+# shellcheck source=lib/binary-discovery.sh
+source "${WRAPPER_LIB}/binary-discovery.sh"
+
+# shellcheck source=lib/remote-session.sh
+source "${WRAPPER_LIB}/remote-session.sh"
+
+# shellcheck source=lib/machine-settings.sh
+source "${WRAPPER_LIB}/machine-settings.sh"
+
+# caffeinate prevents idle sleep. Hardcoded, as in bin/claude-wrapper:
+# PATH could hold a shadowing binary. SIP protects this path.
+CAFF_BIN="/usr/bin/caffeinate"
+if [[ ! -x "${CAFF_BIN}" ]]; then
+  log_error "Could not find caffeinate binary at ${CAFF_BIN}"
+  exit 1
+fi
+
+# Find and validate the real claude binary (skips this script's own path)
+CLAUDE_BIN=""
+if ! CLAUDE_BIN="$(find_claude_binary "${WRAPPER_PATH}")"; then
+  log_error "Could not find claude binary"
+  exit 1
+fi
+
+if ! validate_claude_binary "${CLAUDE_BIN}"; then
+  log_error "Claude binary failed security validation, refusing to execute"
+  exit 1
+fi
+
+# This machine's settings on top of the shared ones (empty array if none)
+MS_ARGS=()
+while IFS= read -r line; do
+  MS_ARGS+=("${line}")
+done < <(build_machine_settings_args "$@" || true)
+
+debug_log "Executing: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#MS_ARGS[@]} injected args + ${#} args]"
+if [[ ${#MS_ARGS[@]} -gt 0 ]]; then
+  exec "${CAFF_BIN}" -is "${CLAUDE_BIN}" "${MS_ARGS[@]}" "$@"
+else
+  exec "${CAFF_BIN}" -is "${CLAUDE_BIN}" "$@"
+fi

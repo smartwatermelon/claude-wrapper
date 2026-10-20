@@ -35,6 +35,9 @@ jobs:
       - name: Run test-machine-settings.sh
         run: bash tests/test-machine-settings.sh
 
+      - name: Run test-claude-wrapper-lite.sh
+        run: bash tests/test-claude-wrapper-lite.sh
+
       - name: Run test-wrapper.sh
         run: bash tests/test-wrapper.sh
 
@@ -58,7 +61,7 @@ jobs:
         run: |
           shopt -s nullglob
           lib_sh=(lib/*.sh)
-          bin_files=(bin/claude-wrapper)
+          bin_files=(bin/claude-wrapper bin/claude-wrapper-lite)
           test_sh=(tests/*.sh)
           testlib_sh=(tests/lib/*.sh)
 
