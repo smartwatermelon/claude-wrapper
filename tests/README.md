@@ -63,6 +63,12 @@ VERBOSE=true ./tests/test-wrapper.sh
 - `get_remote_session_name`: derives name from git repo or directory
 - `build_remote_control_args`: full injection logic including opt-out via `CLAUDE_NO_REMOTE_CONTROL`
 
+### 8. Lite Entry Point Tests (`test-claude-wrapper-lite.sh`)
+
+- Runs `bin/claude-wrapper-lite` against a stub `claude` that prints its argv, directly and through a symlink
+- `--settings <file>` added for a valid machine settings file; argv unchanged otherwise
+- No secrets fetched (`op` and `security` never called), no git identity, no `--remote-control`
+
 ## Test Output
 
 ### Success
