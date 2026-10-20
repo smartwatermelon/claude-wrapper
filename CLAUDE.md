@@ -15,6 +15,7 @@ bash tests/test-wrapper.sh
 bash tests/test-gh-token-permissions.sh
 bash tests/test-remote-session.sh
 bash tests/test-machine-settings.sh
+bash tests/test-claude-wrapper-lite.sh
 ```
 
 There is no test runner script — run individual test files directly. No `npm test` or `make test`.
@@ -22,7 +23,7 @@ There is no test runner script — run individual test files directly. No `npm t
 ### Lint
 
 ```bash
-shellcheck -S info lib/*.sh bin/claude-wrapper tests/*.sh tests/lib/*.sh
+shellcheck -S info lib/*.sh bin/claude-wrapper bin/claude-wrapper-lite tests/*.sh tests/lib/*.sh
 ```
 
 CI (`standards-check`) runs shellcheck with the canonical config from `smartwatermelon/github-workflows` (`standards/shellcheckrc`: `external-sources=true`, `source-path=SCRIPTDIR`, `disable=SC2310`). To match CI locally, add `--rcfile <path to that file>`. Lib and test files source each other through variable paths (`${WRAPPER_LIB}/logging.sh`, `${TEST_DIR}/lib/op-guard.sh`), which shellcheck cannot resolve unless external sourcing is enabled — without it, the `# shellcheck source=...` directives at those call sites are ignored and each one raises a false SC1091.
@@ -54,6 +55,10 @@ The wrapper is a single orchestrator that sources modules in dependency order, t
 9. **Inject 1Password secrets** — if secrets are available, `inject_secrets` runs `op inject` to resolve `op://Automation/...` references from per-project `.claude/secrets.op`; authentication uses `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID prompt)
 10. **Run pre-launch hook** — if secrets are available, `run_pre_launch_hook` runs `.claude/pre-launch.sh` from the git root if it exists and passes security validation
 11. **`exec`** — replaces the wrapper process with `caffeinate -is <claude>`, applying the injected args from step 8
+
+### Lite entry point (`bin/claude-wrapper-lite`)
+
+For a machine that must not get the full wrapper. It resolves its own path the same way, sources only `logging.sh` → `permissions.sh` → `binary-discovery.sh` → `remote-session.sh` → `machine-settings.sh` (each defines functions; the only top-level code sets `DEBUG` and probes the `stat` flavor), finds and validates the real `claude` with `find_claude_binary`/`validate_claude_binary`, adds `build_machine_settings_args`, and execs `/usr/bin/caffeinate -is <claude>`. No secrets, git identity, remote control, launch-dir check, or pre-launch hook. Installed as `~/.local/bin/claude-wrapper-lite`, not as `claude`. Tested by `tests/test-claude-wrapper-lite.sh`.
 
 ### Module dependency chain
 
