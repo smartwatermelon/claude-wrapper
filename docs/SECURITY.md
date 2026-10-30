@@ -1,5 +1,27 @@
 # Security Hardening Documentation
 
+## Containment limits (2026-10-30 correction)
+
+The current wrapper is a convenience and credential-loading program, not a
+security boundary around an agent running as the human account. Ownership and
+mode checks do not prove code provenance or prevent that account from changing
+its own files. A separately chosen GitHub token does not become inaccessible
+to the runtime: `OP_SERVICE_ACCOUNT_TOKEN` and injected secrets are inherited
+by children, including project pre-launch code sourced before Claude starts.
+
+Machine-settings injection is optional and limited to qualifying invocations.
+A direct binary, headless run or caller-supplied settings path must not be
+assumed to have the same overlay. The Bash sandbox, when enabled, does not
+contain hooks, file tools, local MCP servers or other runtime helpers. See
+<https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox>.
+
+The replacement design is in `smartwatermelon/dev-env`,
+`docs/plans/2026-10-30-authorization-rebuild.md`. Ordinary runtime and credentials
+must be isolated from human host administration. Existing launch behavior is
+unchanged pending implementation, native validation and explicit approval.
+The historical hardening claims below describe checks, not proof of that
+containment boundary.
+
 ## Overview
 
 This document describes the security hardening measures implemented in the `claude-wrapper` wrapper to protect credentials and prevent common attack vectors.
