@@ -12,3 +12,6 @@ updates:
       default-days: 7
     commit-message:
       prefix: "chore"
+    ignore:
+      # Interim (dev-env#229): our -vX.Y.Z tags let Dependabot propose an older tag.
+      - dependency-name: "smartwatermelon/github-workflows*"
