@@ -10,6 +10,9 @@ permissions:
 
 jobs:
   dependabot-auto-merge:
-    uses: smartwatermelon/github-workflows/.github/workflows/dependabot-auto-merge.yml@dependabot-auto-merge-v2
+    uses: smartwatermelon/github-workflows/.github/workflows/dependabot-auto-merge.yml@dependabot-auto-merge/v3
     with:
-      trusted_namespaces: 'smartwatermelon'
+      sanity_checks: 'shell-tests' # tests.yml: runs the shell test suites
+    secrets: # these two by name; never `secrets: inherit`
+      MERGE_APP_CLIENT_ID: ${{ secrets.MERGE_APP_CLIENT_ID }}
+      MERGE_APP_PRIVATE_KEY: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
