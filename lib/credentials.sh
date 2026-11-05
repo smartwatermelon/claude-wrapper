@@ -32,7 +32,8 @@ readonly _CREDS_KEYCHAIN_SERVICE="op-service-account-claude-automation"
 # remote, or a non-GitHub remote), which preserves the pre-#120 behavior for
 # sessions launched outside a repo.
 readonly _CREDS_GH_TOKEN_REF_PERSONAL="op://Automation/GitHub - CCCLI/Token"
-readonly _CREDS_GH_TOKEN_REF_SMARTWATERMELON="op://Automation/CCCLI-SWM/token"
+# No smartwatermelon token: that owner uses the smartwatermelon-agent App, so
+# nothing here can approve as Andrew (claude-config#659).
 readonly _CREDS_GH_TOKEN_REF_NIGHTOWLSTUDIOLLC="op://Automation/CCCLI-NOS/token"
 
 # Sentinel exported when the vault fetch fails, so gh fails closed instead of
@@ -162,7 +163,6 @@ _creds_github_owner_for_dir() {
 # token that cannot work.
 _creds_gh_token_ref_for_owner() {
   case "$1" in
-    smartwatermelon) printf '%s' "${_CREDS_GH_TOKEN_REF_SMARTWATERMELON}" ;;
     nightowlstudiollc) printf '%s' "${_CREDS_GH_TOKEN_REF_NIGHTOWLSTUDIOLLC}" ;;
     *) printf '%s' "${_CREDS_GH_TOKEN_REF_PERSONAL}" ;;
   esac
@@ -276,7 +276,6 @@ _load_owner_gh_tokens() {
   local spec var token_ref token loaded=0
   # var:ref pairs. The refs are the same constants _load_gh_token selects from.
   local -a specs=(
-    "GH_TOKEN_SWM:${_CREDS_GH_TOKEN_REF_SMARTWATERMELON}"
     "GH_TOKEN_NOS:${_CREDS_GH_TOKEN_REF_NIGHTOWLSTUDIOLLC}"
     "GH_TOKEN_TWM:${_CREDS_GH_TOKEN_REF_PERSONAL}"
   )
@@ -318,3 +317,5 @@ _load_owner_gh_tokens() {
 _load_service_account_token
 _load_gh_token
 _load_owner_gh_tokens
+# An inherited GH_TOKEN_SWM (an older parent session) must not reach this one.
+unset GH_TOKEN_SWM

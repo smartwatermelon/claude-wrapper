@@ -172,7 +172,8 @@ directory, and a rotated token does not survive into child sessions. When you
 rotate the token in 1Password, the next wrapper launch picks it up
 automatically. The wrapper does not load flat token files. It selects
 `GH_TOKEN` by the launch directory's GitHub owner and also loads one token per
-owner as `GH_TOKEN_SWM`, `GH_TOKEN_NOS`, and `GH_TOKEN_TWM`.
+owner as `GH_TOKEN_NOS` and `GH_TOKEN_TWM`. smartwatermelon uses the agent App,
+and an inherited `GH_TOKEN_SWM` is unset.
 
 ### .gitignore Configuration
 

@@ -284,11 +284,11 @@ result="$(
   PATH="${stub_dir}" \
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
     GH_TOKEN="preset-gh-token" \
-    GH_TOKEN_SWM="stale-swm" GH_TOKEN_NOS="preset-nos" GH_TOKEN_TWM="preset-twm" \
-    CLAUDE_WRAPPER_VAULT_VARS="GH_TOKEN_SWM" \
-    bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN}/\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+    GH_TOKEN_NOS="stale-nos" GH_TOKEN_TWM="preset-twm" \
+    CLAUDE_WRAPPER_VAULT_VARS="GH_TOKEN_NOS" \
+    bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
 )"
-assert_equals "preset-gh-token/fresh-gh-token/preset-nos/preset-twm" "${result}" \
+assert_equals "preset-gh-token/fresh-gh-token/preset-twm" "${result}" \
   "per-owner var left by a previous wrapper run -> re-fetched; unmarked vars kept"
 
 # Every var the wrapper fetched is recorded in the marker, so a child launch
@@ -299,7 +299,7 @@ result="$(
     GH_TOKEN_NOS="preset-nos" \
     bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_TWM CLAUDE_WRAPPER_VAULT_VARS; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${CLAUDE_WRAPPER_VAULT_VARS:-unset}\"" 2>/dev/null
 )"
-assert_equals "GH_TOKEN GH_TOKEN_SWM GH_TOKEN_TWM" "${result}" \
+assert_equals "GH_TOKEN GH_TOKEN_TWM" "${result}" \
   "marker lists exactly the vars fetched from the vault, not the caller's presets"
 
 # The marker must reach child processes, or a nested launch cannot use it.
@@ -308,7 +308,7 @@ result="$(
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
     bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM CLAUDE_WRAPPER_VAULT_VARS; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; bash -c 'echo \"\${CLAUDE_WRAPPER_VAULT_VARS:-unset}\"'" 2>/dev/null
 )"
-assert_equals "GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM" "${result}" \
+assert_equals "GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM" "${result}" \
   "marker is exported to child processes"
 
 # --- Tests: owner-keyed token selection ---
@@ -350,11 +350,11 @@ EOF
   )
 }
 
-# An org remote selects that org's token, not the personal one. This is the
-# regression in #120: a single personal-owner PAT cannot see org repos at all.
+# A smartwatermelon launch gets the personal token (no SWM PAT, #659).
+# KNOWN-BAD on the old code: the SWM ref.
 repo_dir="$(make_repo_with_remote "git@github.com:smartwatermelon/claude-wrapper.git")"
-assert_equals "op://Automation/CCCLI-SWM/token" "$(ref_selected_from "${repo_dir}")" \
-  "smartwatermelon remote -> SWM token ref"
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+  "smartwatermelon remote -> personal token ref, never a smartwatermelon PAT"
 
 repo_dir="$(make_repo_with_remote "git@github.com:nightowlstudiollc/night-owl-studio.git")"
 assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}")" \
@@ -366,8 +366,8 @@ assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${rep
   "twistedmelonman remote -> personal token ref"
 
 # https remotes must parse identically to scp-style ones.
-repo_dir="$(make_repo_with_remote "https://github.com/smartwatermelon/claude-wrapper.git")"
-assert_equals "op://Automation/CCCLI-SWM/token" "$(ref_selected_from "${repo_dir}")" \
+repo_dir="$(make_repo_with_remote "https://github.com/nightowlstudiollc/night-owl-studio.git")"
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}")" \
   "https remote -> same owner as scp-style remote"
 
 # ssh://git@github.com/owner/repo is a valid remote form that a naive
@@ -402,9 +402,9 @@ assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${rep
 
 # A subdirectory resolves to the enclosing repo's owner, since the wrapper is
 # frequently launched from somewhere below the git root.
-repo_dir="$(make_repo_with_remote "git@github.com:smartwatermelon/claude-wrapper.git")"
+repo_dir="$(make_repo_with_remote "git@github.com:nightowlstudiollc/night-owl-studio.git")"
 mkdir -p "${repo_dir}/nested/deeper"
-assert_equals "op://Automation/CCCLI-SWM/token" "$(ref_selected_from "${repo_dir}/nested/deeper")" \
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}/nested/deeper")" \
   "subdirectory of a repo -> enclosing repo's owner"
 
 # --- Per-owner token loading (_load_owner_gh_tokens) ---
@@ -453,10 +453,10 @@ chmod +x "${stub_dir}/op"
 result="$(
   PATH="${stub_dir}" \
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
-    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM:-unset}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
 )"
-assert_equals "tok-swm/tok-nos/tok-twm" "${result}" \
-  "all refs resolve -> each per-owner var loaded from its own ref"
+assert_equals "unset/tok-nos/tok-twm" "${result}" \
+  "all refs resolve -> NOS and TWM loaded from their own refs; no SWM token even though the vault has one"
 
 # FAIL-CLOSED PATH. Every ref fails -> each var holds the invalid sentinel,
 # never an empty string. An empty value would let gh fall through to the
@@ -472,9 +472,9 @@ chmod +x "${stub_dir}/op"
 result="$(
   PATH="${stub_dir}" \
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
-    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM:-unset}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
 )"
-assert_equals "invalid-cccli-token-vault-fetch-failed/invalid-cccli-token-vault-fetch-failed/invalid-cccli-token-vault-fetch-failed" "${result}" \
+assert_equals "unset/invalid-cccli-token-vault-fetch-failed/invalid-cccli-token-vault-fetch-failed" "${result}" \
   "all refs fail -> every per-owner var set to the invalid sentinel (fails closed)"
 
 # A partial failure must not poison the refs that did resolve: one bad ref
@@ -494,9 +494,9 @@ chmod +x "${stub_dir}/op"
 result="$(
   PATH="${stub_dir}" \
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
-    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM:-unset}/\${GH_TOKEN_NOS}/\${GH_TOKEN_TWM}\"" 2>/dev/null
 )"
-assert_equals "tok-swm/invalid-cccli-token-vault-fetch-failed/tok-twm" "${result}" \
+assert_equals "unset/invalid-cccli-token-vault-fetch-failed/tok-twm" "${result}" \
   "one ref fails -> only that var gets the sentinel, others keep their tokens"
 
 # The fail-closed path must warn, so a degraded session is visible. A silent
@@ -512,7 +512,7 @@ warn_output="$(
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
     bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
 )"
-assert_contains "Failed to fetch GH_TOKEN_SWM from 1Password" "${warn_output}" \
+assert_contains "Failed to fetch GH_TOKEN_NOS from 1Password" "${warn_output}" \
   "per-owner fetch failure warns rather than failing silently"
 
 # An already-set var is respected and costs no vault read — matching
@@ -529,13 +529,28 @@ chmod +x "${stub_dir}/op"
 result="$(
   PATH="${stub_dir}" \
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
-    GH_TOKEN_SWM="preset-swm" \
-    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM}\"" 2>/dev/null
+    GH_TOKEN_NOS="preset-nos" \
+    bash -c "unset GH_TOKEN GH_TOKEN_SWM GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_NOS}\"" 2>/dev/null
 )"
-assert_equals "preset-swm" "${result}" \
+assert_equals "preset-nos" "${result}" \
   "already-set per-owner var is preserved, not overwritten"
-assert_equals "" "$(grep -F "op://Automation/CCCLI-SWM/token" "${call_log}" 2>/dev/null || true)" \
+assert_equals "" "$(grep -F "op://Automation/CCCLI-NOS/token" "${call_log}" 2>/dev/null || true)" \
   "already-set per-owner var -> its ref is never read from the vault"
+
+# An inherited GH_TOKEN_SWM is unset; CCCLI-SWM is never read.
+# KNOWN-BAD on the old code: the preset was kept.
+: >"${call_log}"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN_SWM="inherited-swm" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; echo \"\${GH_TOKEN_SWM:-unset}\"; bash -c 'echo child:\${GH_TOKEN_SWM:-unset}'" 2>/dev/null
+)"
+assert_equals "unset
+child:unset" "${result}" \
+  "an inherited GH_TOKEN_SWM is removed, in the session and its children"
+assert_equals "" "$(grep -F "CCCLI-SWM" "${call_log}" 2>/dev/null || true)" \
+  "the CCCLI-SWM vault item is never read"
 
 # --- Summary ---
 
