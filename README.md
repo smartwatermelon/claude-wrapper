@@ -82,9 +82,13 @@ and cannot cover a personal account and two orgs at once:
 
 | Owner | Vault item |
 | ------ | ------- |
-| `smartwatermelon` | `op://Automation/CCCLI-SWM/token` |
 | `nightowlstudiollc` | `op://Automation/CCCLI-NOS/token` |
 | anything else, or not derivable | `op://Automation/GitHub - CCCLI/Token` |
+
+`smartwatermelon` has no personal token. Its `gh` calls and pushes act as the
+`smartwatermelon-agent` GitHub App (dotfiles `gh-app-routes.conf`). No token
+here can approve a smartwatermelon PR as you. A smartwatermelon launch gets the
+personal token, which can't act on smartwatermelon.
 
 Only one item is read per launch. A directory that is not a git repo, has no
 `origin`, or has a non-GitHub remote falls back to the personal token. Run with
