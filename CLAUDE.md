@@ -90,9 +90,10 @@ A fine-grained PAT is bound to exactly one GitHub resource owner at creation and
 
 | Owner | Vault item |
 | ------ | ------- |
-| `smartwatermelon` | `op://Automation/CCCLI-SWM/token` |
 | `nightowlstudiollc` | `op://Automation/CCCLI-NOS/token` |
 | anything else, or owner not derivable | `op://Automation/GitHub - CCCLI/Token` |
+
+`smartwatermelon` has no row: its gh calls and pushes act as the `smartwatermelon-agent` GitHub App (dotfiles `gh-app-routes.conf`), so a smartwatermelon launch gets the personal token, which cannot act there. An inherited `GH_TOKEN_SWM` is unset (smartwatermelon/claude-config#659).
 
 One `op read` per launch — the token is selected, not accumulated. "Not derivable" covers a non-git directory, a repo with no `origin`, and a non-GitHub remote; all fall back to the personal token, which still covers the `twistedmelonman` repos.
 
@@ -141,7 +142,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 *~500 tokens/session saved*
 
-- `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from one of three Automation vault items chosen by the launch directory's GitHub owner (`CCCLI-SWM`, `CCCLI-NOS`, or `GitHub - CCCLI` as fallback); no flat token files exist
+- `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from one of two Automation vault items chosen by the launch directory's GitHub owner (`CCCLI-NOS`, or `GitHub - CCCLI` for everything else); no flat token files exist
 - Per-project secrets live in `.claude/secrets.op` (committed) referencing `op://Automation/...`; resolved by `secrets-loader.sh` via `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID)
 - The global `~/.config/claude-code/secrets.op` no longer exists
 - `opp <args>` runs `op` as your personal account (unsets service account token for that subprocess); needed for Personal vault access (e.g. prep-airdrop.sh)
