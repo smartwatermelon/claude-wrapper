@@ -49,8 +49,23 @@ make_stub_dir() {
     real_bin="$(type -P "${bin}" 2>/dev/null || true)"
     [[ -n "${real_bin}" ]] && ln -s "${real_bin}" "${stub_dir}/${bin}"
   done
+  write_hostname_stub "${stub_dir}" "${STUB_HOSTNAME}"
   echo "${stub_dir}"
 }
+
+# Tokens load only on arich-mac, so stub dirs pose as it by default; the
+# host-gate tests pick other names.
+STUB_HOSTNAME="ARICH-MAC"
+write_hostname_stub() {
+  local dir="$1" name="$2"
+  printf '#!/bin/sh\necho "%s"\n' "${name}" >"${dir}/hostname"
+  chmod +x "${dir}/hostname"
+}
+
+# For tests that run with the real PATH: prepend this dir so `hostname`
+# resolves to arich-mac and everything else to the real binaries.
+ARICH_HOST_DIR="$(mktemp -d "${TEST_TMP}/host-arich.XXXXXX")"
+write_hostname_stub "${ARICH_HOST_DIR}" "ARICH-MAC"
 
 assert_equals() {
   local expected="$1" actual="$2" message="$3"
@@ -149,7 +164,8 @@ echo "=== _load_gh_token ==="
 
 # GH_TOKEN already set -> vault lookup skipped.
 debug_output="$(
-  GH_TOKEN="preset-gh-token" \
+  PATH="${ARICH_HOST_DIR}:${PATH}" \
+    GH_TOKEN="preset-gh-token" \
     OP_SERVICE_ACCOUNT_TOKEN="dummy" \
     CLAUDE_DEBUG=true \
     bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
@@ -353,58 +369,58 @@ EOF
 # A smartwatermelon launch gets the personal token (no SWM PAT, #659).
 # KNOWN-BAD on the old code: the SWM ref.
 repo_dir="$(make_repo_with_remote "git@github.com:smartwatermelon/claude-wrapper.git")"
-assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}" || true)" \
   "smartwatermelon remote -> personal token ref, never a smartwatermelon PAT"
 
 repo_dir="$(make_repo_with_remote "git@github.com:nightowlstudiollc/night-owl-studio.git")"
-assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}" || true)" \
   "nightowlstudiollc remote -> NOS token ref"
 
 # The personal owner keeps the original ref — it still covers ~33 repos.
 repo_dir="$(make_repo_with_remote "git@github.com:twistedmelonman/something.git")"
-assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}" || true)" \
   "twistedmelonman remote -> personal token ref"
 
 # https remotes must parse identically to scp-style ones.
 repo_dir="$(make_repo_with_remote "https://github.com/nightowlstudiollc/night-owl-studio.git")"
-assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}" || true)" \
   "https remote -> same owner as scp-style remote"
 
 # ssh://git@github.com/owner/repo is a valid remote form that a naive
 # scp-style-only pattern does not match.
 repo_dir="$(make_repo_with_remote "ssh://git@github.com/nightowlstudiollc/x.git")"
-assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}" || true)" \
   "ssh:// remote form -> owner parsed correctly"
 
 # An unknown org falls back to the personal token rather than guessing. It
 # fails loudly with a permissions error, which beats silently trying a token
 # that cannot work.
 repo_dir="$(make_repo_with_remote "git@github.com:someotherorg/repo.git")"
-assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}" || true)" \
   "unknown owner -> personal token ref (fallback)"
 
 # A non-GitHub remote must yield no owner. A sed-based parser passes its input
 # through unchanged when the pattern does not match, which would put an entire
 # URL where an owner name belongs.
 repo_dir="$(make_repo_with_remote "https://gitlab.com/someone/thing.git")"
-assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}" || true)" \
   "non-GitHub remote -> personal token ref (owner not derivable)"
 
 # A git repo with no origin remote at all.
 repo_dir="$(make_repo_with_remote "")"
-assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}" || true)" \
   "repo without origin remote -> personal token ref"
 
 # Not a git repo — the pre-#120 behavior for sessions launched outside a repo.
 repo_dir="$(mktemp -d "${TEST_TMP}/plain.XXXXXX")"
-assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}")" \
+assert_equals "op://Automation/GitHub - CCCLI/Token" "$(ref_selected_from "${repo_dir}" || true)" \
   "non-repo directory -> personal token ref"
 
 # A subdirectory resolves to the enclosing repo's owner, since the wrapper is
 # frequently launched from somewhere below the git root.
 repo_dir="$(make_repo_with_remote "git@github.com:nightowlstudiollc/night-owl-studio.git")"
 mkdir -p "${repo_dir}/nested/deeper"
-assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}/nested/deeper")" \
+assert_equals "op://Automation/CCCLI-NOS/token" "$(ref_selected_from "${repo_dir}/nested/deeper" || true)" \
   "subdirectory of a repo -> enclosing repo's owner"
 
 # --- Per-owner token loading (_load_owner_gh_tokens) ---
@@ -551,6 +567,139 @@ child:unset" "${result}" \
   "an inherited GH_TOKEN_SWM is removed, in the session and its children"
 assert_equals "" "$(grep -F "CCCLI-SWM" "${call_log}" 2>/dev/null || true)" \
   "the CCCLI-SWM vault item is never read"
+
+# --- Host gate: no personal GitHub token off arich-mac ---
+# Values here are stub literals; no assertion handles a real credential.
+
+echo ""
+echo "=== host gate (app-only GitHub off arich-mac) ==="
+
+SENTINEL="invalid-cccli-token-vault-fetch-failed"
+
+# An op stub that hands out a distinct fake value per ref and logs each ref.
+make_host_gate_stub() {
+  local host="$1" stub
+  stub="$(make_stub_dir env bash cat id security timeout)"
+  write_hostname_stub "${stub}" "${host}"
+  cat >"${stub}/op" <<EOF
+#!/usr/bin/env bash
+echo "\$2" >>"${stub}/op-calls.log"
+case "\$2" in
+  "op://Automation/CCCLI-NOS/token") echo "tok-nos" ;;
+  "op://Automation/GitHub - CCCLI/Token") echo "tok-personal" ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "${stub}/op"
+  printf '%s' "${stub}"
+}
+
+# Prints the five token vars. Sourced: the session. Run: a child process.
+REPORT_SCRIPT="${TEST_TMP}/report-vars.sh"
+cat >"${REPORT_SCRIPT}" <<'EOF'
+echo "${GH_TOKEN:-unset}/${GH_TOKEN_NOS:-unset}/${GH_TOKEN_TWM:-unset}/${GITHUB_TOKEN:-unset}/${GH_TOKEN_SWM:-unset}"
+EOF
+REPORT_VARS="source '${REPORT_SCRIPT}'"
+
+# Personal host, all inherited: none survive, no vault read.
+# KNOWN-BAD on the old code: the presets were kept.
+stub_dir="$(make_host_gate_stub "ASIAGO")"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN="inherited-gh" GH_TOKEN_NOS="inherited-nos" GH_TOKEN_TWM="inherited-twm" \
+    GITHUB_TOKEN="inherited-github" GH_TOKEN_SWM="inherited-swm" \
+    bash -c "source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; ${REPORT_VARS}; bash '${REPORT_SCRIPT}'" 2>/dev/null
+)"
+assert_equals "${SENTINEL}/unset/unset/unset/unset
+${SENTINEL}/unset/unset/unset/unset" "${result}" \
+  "personal host, all inherited -> none kept, GH_TOKEN is the sentinel, children clean"
+assert_equals "" "$(grep -F "op://Automation/" "${stub_dir}/op-calls.log" 2>/dev/null || true)" \
+  "personal host -> no GitHub token vault item is read"
+
+# Personal host, nothing inherited: nothing loaded.
+# KNOWN-BAD on the old code: three tokens were fetched.
+stub_dir="$(make_host_gate_stub "TILSIT")"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM GITHUB_TOKEN GH_TOKEN_SWM CLAUDE_WRAPPER_VAULT_VARS; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; ${REPORT_VARS}" 2>/dev/null
+)"
+assert_equals "${SENTINEL}/unset/unset/unset/unset" "${result}" \
+  "personal host, nothing inherited -> no token loaded"
+
+# A missing token on a personal host is the design, not a fault: no warning.
+warn_output="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM GITHUB_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'" 2>&1 1>/dev/null
+)"
+assert_equals "" "$(grep -F "WARNING" <<<"${warn_output}" || true)" \
+  "personal host -> no warning about the absent tokens"
+
+# A name that only starts with arich-mac is not arich-mac.
+stub_dir="$(make_host_gate_stub "arich-mac2")"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM GITHUB_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; ${REPORT_VARS}" 2>/dev/null
+)"
+assert_equals "${SENTINEL}/unset/unset/unset/unset" "${result}" \
+  "host arich-mac2 -> treated as personal (exact match only)"
+
+# No hostname command: the host cannot be shown to be arich-mac, so fail closed.
+stub_dir="$(make_host_gate_stub "unused")"
+rm -f "${stub_dir}/hostname"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM GITHUB_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; ${REPORT_VARS}" 2>/dev/null
+)"
+assert_equals "${SENTINEL}/unset/unset/unset/unset" "${result}" \
+  "hostname unavailable -> treated as personal"
+
+# arich-mac, either case: unchanged (GITHUB_TOKEN kept, SWM still removed).
+for host in ARICH-MAC arich-mac; do
+  stub_dir="$(make_host_gate_stub "${host}")"
+  result="$(
+    PATH="${stub_dir}" \
+      OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+      GITHUB_TOKEN="caller-github" GH_TOKEN_SWM="inherited-swm" \
+      bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM CLAUDE_WRAPPER_VAULT_VARS; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; ${REPORT_VARS}" 2>/dev/null
+  )"
+  assert_equals "tok-personal/tok-nos/tok-personal/caller-github/unset" "${result}" \
+    "host ${host} -> tokens loaded as before"
+done
+
+# arich-mac keeps a caller's presets, as before.
+stub_dir="$(make_host_gate_stub "arich-mac")"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    GH_TOKEN="preset-gh" GH_TOKEN_NOS="preset-nos" GH_TOKEN_TWM="preset-twm" \
+    bash -c "unset GITHUB_TOKEN CLAUDE_WRAPPER_VAULT_VARS; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; ${REPORT_VARS}" 2>/dev/null
+)"
+assert_equals "preset-gh/preset-nos/preset-twm/unset/unset" "${result}" \
+  "host arich-mac -> caller presets kept"
+
+# secrets.op or pre-launch can re-export these; the pre-exec strip removes them.
+stub_dir="$(make_host_gate_stub "ASIAGO")"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM GITHUB_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; export GH_TOKEN=from-secrets-op GH_TOKEN_NOS=from-hook GH_TOKEN_TWM=from-hook GITHUB_TOKEN=from-hook; creds_enforce_app_only_gh; ${REPORT_VARS}" 2>/dev/null
+)"
+assert_equals "${SENTINEL}/unset/unset/unset/unset" "${result}" \
+  "personal host -> tokens exported after credentials.sh are removed before launch"
+
+stub_dir="$(make_host_gate_stub "ARICH-MAC")"
+result="$(
+  PATH="${stub_dir}" \
+    OP_SERVICE_ACCOUNT_TOKEN="dummy" \
+    bash -c "unset GH_TOKEN GH_TOKEN_NOS GH_TOKEN_TWM GITHUB_TOKEN; source '${LIB_DIR}/logging.sh'; source '${LIB_DIR}/credentials.sh'; export GH_TOKEN=from-secrets-op GITHUB_TOKEN=from-hook; creds_enforce_app_only_gh; ${REPORT_VARS}" 2>/dev/null
+)"
+assert_equals "from-secrets-op/tok-nos/tok-personal/from-hook/unset" "${result}" \
+  "arich-mac -> the pre-launch strip changes nothing"
 
 # --- Summary ---
 

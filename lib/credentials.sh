@@ -10,6 +10,8 @@
 # rather than left unset, so gh fails closed instead of falling back to the
 # keyring OAuth token (which holds admin:org). See _load_gh_token.
 #
+# GitHub tokens load only on arich-mac; elsewhere see creds_enforce_app_only_gh.
+#
 # Requires: lib/logging.sh must be sourced first.
 # Must be sourced before lib/secrets-loader.sh (which needs OP_SERVICE_ACCOUNT_TOKEN).
 
@@ -61,6 +63,14 @@ readonly _CREDS_VAULT_MARKER_VAR="CLAUDE_WRAPPER_VAULT_VARS"
 _CREDS_HAS_TIMEOUT=false
 command -v timeout &>/dev/null && _CREDS_HAS_TIMEOUT=true
 readonly _CREDS_HAS_TIMEOUT
+
+# Personal GitHub tokens: arich-mac only (CLAUDE.md). hostname is on PATH
+# for test stubs; no env override. Unreadable means not arich-mac.
+_CREDS_PERSONAL_GH_ALLOWED=false
+if [[ "$(hostname -s 2>/dev/null || true)" =~ ^[Aa][Rr][Ii][Cc][Hh]-[Mm][Aa][Cc]$ ]]; then
+  _CREDS_PERSONAL_GH_ALLOWED=true
+fi
+readonly _CREDS_PERSONAL_GH_ALLOWED
 
 # =========================================================
 # SERVICE ACCOUNT TOKEN
@@ -311,11 +321,25 @@ _load_owner_gh_tokens() {
   debug_log "Per-owner tokens available: ${loaded}/${#specs[@]}"
 }
 
+# Off arich-mac, remove personal GitHub tokens. bin/claude-wrapper calls it
+# again before exec: secrets.op and pre-launch run after this file.
+creds_enforce_app_only_gh() {
+  "${_CREDS_PERSONAL_GH_ALLOWED}" && return 0
+  unset GH_TOKEN_NOS GH_TOKEN_TWM GH_TOKEN_SWM GITHUB_TOKEN "${_CREDS_VAULT_MARKER_VAR}"
+  # Sentinel, not unset: unset lets gh use the keyring login (Andrew).
+  export GH_TOKEN="${_CREDS_GH_TOKEN_FETCH_FAILED}"
+}
+
 # =========================================================
 # MAIN
 # =========================================================
 _load_service_account_token
-_load_gh_token
-_load_owner_gh_tokens
+if "${_CREDS_PERSONAL_GH_ALLOWED}"; then
+  _load_gh_token
+  _load_owner_gh_tokens
+else
+  debug_log "Not arich-mac: no personal GitHub token loaded; gh acts only as the GitHub Apps"
+fi
+creds_enforce_app_only_gh
 # An inherited GH_TOKEN_SWM (an older parent session) must not reach this one.
 unset GH_TOKEN_SWM

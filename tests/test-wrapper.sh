@@ -20,6 +20,9 @@ REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 WRAPPER="${REPO_ROOT}/bin/claude-wrapper"
 LIB_DIR="${REPO_ROOT}/lib"
 
+# An inherited session marker would turn Test 3.6's presets into leftovers.
+unset CLAUDE_WRAPPER_VAULT_VARS
+
 # shellcheck source=tests/lib/op-guard.sh
 source "${TEST_DIR}/lib/op-guard.sh"
 
@@ -605,6 +608,10 @@ EOF
     real_bin="$(command -v "${bin}" 2>/dev/null || true)"
     [[ -n "${real_bin}" ]] && ln -s "${real_bin}" "${stub_dir}/${bin}"
   done
+  # credentials.sh fetches GitHub tokens only on arich-mac; pose as that host
+  # so this test reaches the vault read on any machine, CI included.
+  printf '#!/bin/sh\necho ARICH-MAC\n' >"${stub_dir}/hostname"
+  chmod +x "${stub_dir}/hostname"
 
   # The per-owner vars are preset so _load_owner_gh_tokens takes its
   # already-set path and reads nothing. This assertion counts _load_gh_token's
@@ -746,6 +753,33 @@ test_mock_integration() {
     assert_contains "GIT_AUTHOR_NAME=Claude Code Bot" "${output}" "Git identity passed through"
   else
     echo -e "${YELLOW}⚠${NC} Integration test skipped (wrapper exited with ${exit_code})"
+  fi
+
+  # Personal host: inherited tokens never reach claude. Fake presets only.
+  local host_dir
+  host_dir="${TEST_TMP}/host-personal"
+  mkdir -p "${host_dir}"
+  printf '#!/bin/sh\necho ASIAGO\n' >"${host_dir}/hostname"
+  chmod +x "${host_dir}/hostname"
+  exit_code=0
+  output="$(
+    PATH="${host_dir}:${PATH}" \
+      GH_TOKEN="inherited-gh" GH_TOKEN_NOS="inherited-nos" GH_TOKEN_TWM="inherited-twm" \
+      GH_TOKEN_SWM="inherited-swm" \
+      "${test_wrapper}" --version 2>&1
+  )" || exit_code=$?
+
+  # Names and yes/no only: a failure prints "Actual", maybe a real token.
+  if [[ ${exit_code} -eq 0 ]] && [[ "${output}" == *MOCK_CLAUDE_EXECUTED* ]]; then
+    local names sentinel_only="no"
+    names="$(grep -oE '^GH_TOKEN[A-Z_]*=' <<<"${output}" | tr '\n' ' ' || true)"
+    grep -qx 'GH_TOKEN=invalid-cccli-token-vault-fetch-failed' <<<"${output}" && sentinel_only="yes"
+    assert_equals "GH_TOKEN= " "${names}" \
+      "Personal host: no GH_TOKEN_* var reaches the launched process"
+    assert_equals "yes" "${sentinel_only}" \
+      "Personal host: GH_TOKEN reaches the launched process only as the sentinel"
+  else
+    echo -e "${YELLOW}⚠${NC} Personal-host launch test skipped (wrapper exited with ${exit_code})"
   fi
 }
 

@@ -67,6 +67,11 @@ cat ~/.ssh/id_ed25519_claude_code.pub
 
 #### GitHub Token
 
+This applies only on the company Mac, arich-mac. On any other host the wrapper
+loads no personal GitHub token and removes inherited ones; `GH_TOKEN` holds
+only an invalid sentinel, and agents act on GitHub as the GitHub Apps. See
+`docs/SECRETS.md`.
+
 The wrapper fetches `GH_TOKEN` itself at launch, via `lib/credentials.sh`. It
 reads `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain, then resolves a token
 from the 1Password Automation vault. No shell-startup setup is required — if
