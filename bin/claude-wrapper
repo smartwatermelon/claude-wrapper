@@ -107,7 +107,7 @@ fi
 creds_enforce_app_only_gh
 
 if secrets_available; then
-  debug_log "Executing:${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} injected args + ${#} args] with secrets loaded"
+  debug_log "Executing: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} injected args + ${#} args] with secrets loaded"
 else
   debug_log "Executing: ${CAFF_BIN} -is ${CLAUDE_BIN} [${#RC_ARGS[@]} injected args + ${#} args]"
 fi
