@@ -842,6 +842,23 @@ test_caffeinate_launch() {
   fi
 }
 
+test_app_only_strip_before_exec() {
+  echo ""
+  echo "Test 4.6: Strips personal GitHub tokens after secrets load, before exec"
+
+  # Never skipped, unlike the launch check in 4.3, which needs a runnable wrapper.
+  local strip_line inject_line exec_line in_order="no"
+  strip_line="$(grep -nE '^creds_enforce_app_only_gh$' "${WRAPPER}" | tail -1 | cut -d: -f1 || true)"
+  inject_line="$(grep -nE 'inject_secrets|run_pre_launch_hook' "${WRAPPER}" | tail -1 | cut -d: -f1 || true)"
+  exec_line="$(grep -nE '^[[:space:]]*exec ' "${WRAPPER}" | head -1 | cut -d: -f1 || true)"
+  if [[ -n "${strip_line}" && -n "${inject_line}" && -n "${exec_line}" ]] \
+    && ((inject_line < strip_line && strip_line < exec_line)); then
+    in_order="yes"
+  fi
+  assert_equals "yes" "${in_order}" \
+    "creds_enforce_app_only_gh runs after inject_secrets/pre-launch and before exec"
+}
+
 # =============================================================================
 # SECTION 5: Regression Tests - Ensure existing functionality preserved
 # =============================================================================
@@ -945,6 +962,7 @@ main() {
   test_mock_integration
   test_no_old_naming_references
   test_caffeinate_launch
+  test_app_only_strip_before_exec
 
   # Section 5: Regression Tests
   echo ""
