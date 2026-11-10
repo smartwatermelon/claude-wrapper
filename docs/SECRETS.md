@@ -154,6 +154,17 @@ DEBUG_MODE=true
 
 ### GitHub Token Integration
 
+Only on the company Mac, arich-mac (`hostname -s`, any case), does the wrapper
+load a personal GitHub token. On every other host it loads no `GH_TOKEN`,
+`GH_TOKEN_NOS` or `GH_TOKEN_TWM`, and it removes those, `GH_TOKEN_SWM` and
+`GITHUB_TOKEN` if the session inherits them. It removes them again just
+before it starts Claude, so a `secrets.op` entry or a pre-launch hook cannot
+put one back. `GH_TOKEN` is left as the invalid sentinel
+`invalid-cccli-token-vault-fetch-failed`, not unset: with no `GH_TOKEN`, gh
+falls back to the keyring login, which acts as Andrew. Agents there reach
+GitHub only as the GitHub Apps, which the dotfiles gh wrapper mints per call.
+The rest of this section describes arich-mac.
+
 `GH_TOKEN` is fetched by the wrapper itself at launch, via `lib/credentials.sh`.
 It reads `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain, then resolves the
 token from the 1Password Automation vault:
@@ -344,7 +355,7 @@ Output shows which files loaded in order. Last file wins for duplicate variables
 | `GIT_COMMITTER_NAME` | `Claude Code Bot` | Git committer |
 | `GIT_COMMITTER_EMAIL` | `claude-code@smartwatermelon.github` | Git committer email |
 | `GIT_SSH_COMMAND` | `ssh -i ~/.ssh/id_ed25519_claude_code ...` | SSH key for git |
-| `GH_TOKEN` | Fetched by wrapper from 1Password Automation vault via `lib/credentials.sh` | GitHub CLI token |
+| `GH_TOKEN` | arich-mac: fetched by wrapper from 1Password Automation vault via `lib/credentials.sh`. Other hosts: the invalid sentinel only | GitHub CLI token |
 
 ### Loaded from secrets.op
 

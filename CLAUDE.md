@@ -64,7 +64,7 @@ For a machine that must not get the full wrapper. It resolves its own path the s
 
 Every `lib/*.sh` file assumes `logging.sh` is already sourced. `permissions.sh` and `path-security.sh` are foundational — other modules call their functions.
 
-- **`credentials.sh`** — fetches `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain (service `op-service-account-claude-automation`) and `GH_TOKEN` from the Automation vault via that service account, retrying `op read` with exponential backoff. Runs automatically as a side effect of being sourced (not invoked as a discrete step later in the flow). Both are exported into the wrapper process and inherited by its children, including the agent's own shell — they are absent from the user's login shell but visible to anything the wrapper launches. If the vault fetch fails, `GH_TOKEN` is set to a deliberately invalid sentinel so `gh` fails closed, rather than left unset (which would let `gh` fall back to the keyring OAuth token and its `admin:org` scope). Must be sourced before `secrets-loader.sh`, which depends on `OP_SERVICE_ACCOUNT_TOKEN`.
+- **`credentials.sh`** — fetches `OP_SERVICE_ACCOUNT_TOKEN` from the macOS Keychain (service `op-service-account-claude-automation`) and `GH_TOKEN` from the Automation vault via that service account, retrying `op read` with exponential backoff. Runs automatically as a side effect of being sourced (not invoked as a discrete step later in the flow). Both are exported into the wrapper process and inherited by its children, including the agent's own shell — they are absent from the user's login shell but visible to anything the wrapper launches. If the vault fetch fails, `GH_TOKEN` is set to a deliberately invalid sentinel so `gh` fails closed, rather than left unset (which would let `gh` fall back to the keyring OAuth token and its `admin:org` scope). GitHub tokens are loaded only on arich-mac; see "Personal GitHub tokens: arich-mac only" below. Must be sourced before `secrets-loader.sh`, which depends on `OP_SERVICE_ACCOUNT_TOKEN`.
 - **`secrets-loader.sh`** — discovers secrets files at two levels (project `.claude/secrets.op`, local `.claude/secrets.local.op`), validates permissions/paths, runs `op inject` to resolve `op://Automation/...` references against the Automation vault via service account. Invoked explicitly as `init_secrets_loader` and `inject_secrets` (see execution flow above).
 - **`launch-dir-check.sh`** — `check_launch_dir` warns to stderr (never blocks) when CWD is exactly `$HOME` or `$HOME/Developer` — not subdirectories, which are legitimate git repos — since per-project secrets/pre-launch hooks are skipped there and an unrelated MCP server surface from `~/.claude/.claude.json` loads instead; recommends `--add-dir` for multi-repo work
 - **`binary-discovery.sh`** — finds the real `claude` binary in `$PATH` excluding the wrapper itself, validates it isn't world-writable
@@ -83,6 +83,14 @@ The wrapper execs `claude` through `caffeinate -is`, so the system does not idle
 `CAFF_BIN` is hardcoded to `/usr/bin/caffeinate` rather than resolved with `command -v`. `caffeinate` runs with `GH_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN` in its environment, so a binary of the same name earlier in `$PATH` would receive both — and would bypass the ownership/permission validation that `binary-discovery.sh` applies to the `claude` binary. System Integrity Protection guarantees the `/usr/bin` path and prevents it being replaced.
 
 `-i` (prevent idle sleep) holds on battery as well as AC; `-s` is AC-only.
+
+#### Personal GitHub tokens: arich-mac only
+
+Andrew's rule (2026-11-09): no GitHub operation by an agent may act as a person. On any host whose `hostname -s` is not `arich-mac` (any case, exact match), `credentials.sh` loads no `GH_TOKEN`, `GH_TOKEN_NOS` or `GH_TOKEN_TWM`, and `creds_enforce_app_only_gh` removes `GH_TOKEN_NOS`, `GH_TOKEN_TWM`, `GH_TOKEN_SWM`, `GITHUB_TOKEN` and `CLAUDE_WRAPPER_VAULT_VARS`. `bin/claude-wrapper` calls it again just before `exec`, because `inject_secrets` (a `secrets.op` can name `GH_TOKEN`) and the pre-launch hook run after `credentials.sh`. Agents there act on GitHub only as the GitHub Apps, minted per call by the dotfiles gh wrapper.
+
+`GH_TOKEN` is set to the fetch-failed sentinel, not unset: an unset `GH_TOKEN` lets gh and the gh wrapper fall back to the keyring login, which acts as Andrew. The gh wrapper replaces `GH_TOKEN` with the App token on App-routed calls, so those still work.
+
+If `hostname` is missing or fails, the host counts as personal. There is no env-var override; tests put a `hostname` stub on `PATH`. The section below applies to arich-mac only.
 
 #### GitHub token selection
 
@@ -114,7 +122,7 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 | `.claude/secrets.op` | Per-project 1Password secrets (committed); references `op://Automation/...` |
 | `.claude/secrets.local.op` | Per-project local overrides (gitignored) |
 
-`GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from the Automation vault item matching the launch directory's GitHub owner (see "GitHub token selection" above) — not from a flat file, and not sourced by shell startup.
+On arich-mac, `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from the Automation vault item matching the launch directory's GitHub owner (see "GitHub token selection" above) — not from a flat file, and not sourced by shell startup. On other hosts it is only the invalid sentinel.
 
 ## Headroom Learned Patterns
 
@@ -142,9 +150,9 @@ All secret files (`.op` files) must be owner-only permissions (no group/world). 
 
 *~500 tokens/session saved*
 
-- `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from one of two Automation vault items chosen by the launch directory's GitHub owner (`CCCLI-NOS`, or `GitHub - CCCLI` for everything else); no flat token files exist
+- On arich-mac only, `GH_TOKEN` is fetched by the wrapper itself, via `lib/credentials.sh`, from one of two Automation vault items chosen by the launch directory's GitHub owner (`CCCLI-NOS`, or `GitHub - CCCLI` for everything else); no flat token files exist. Other hosts get no personal GitHub token
 - Per-project secrets live in `.claude/secrets.op` (committed) referencing `op://Automation/...`; resolved by `secrets-loader.sh` via `OP_SERVICE_ACCOUNT_TOKEN` (no TouchID)
-- The global `~/.config/claude-code/secrets.op` no longer exists
+- `secrets-loader.sh` still loads a global `~/.config/claude-code/secrets.op` when one exists, and at least one personal Mac has one that sets `GH_TOKEN`; off arich-mac the pre-exec strip removes it
 - `opp <args>` runs `op` as your personal account (unsets service account token for that subprocess); needed for Personal vault access (e.g. prep-airdrop.sh)
 
 ### Pre-commit Hooks
